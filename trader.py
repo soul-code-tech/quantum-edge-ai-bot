@@ -7,6 +7,15 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class BingXTrader:
+   # trader.py — ФИНАЛЬНАЯ ВЕРСИЯ: ПЛЕЧО, КОМИССИЯ, ТРЕЙЛИНГ, БЛОКИРОВКА ПАР
+import ccxt
+import os
+import time
+from dotenv import load_dotenv
+
+load_dotenv()
+
+class BingXTrader:
     def __init__(self, symbol='BTC-USDT', use_demo=False):
         self.symbol = symbol
         self.use_demo = use_demo
@@ -18,22 +27,11 @@ class BingXTrader:
         })
         if use_demo:
             self.exchange.set_sandbox_mode(True)
-        
-        # Храним текущую позицию и её трейлинг-стоп
-        self.position = None
-        self.trailing_stop_price = None
-        self.trailing_distance_percent = 1.0  # 1% от цены
 
-    def place_order(self, side, amount, stop_loss_percent=1.5, take_profit_percent=3.0):
-        try:
-            print(f"📤 Отправка рыночного ордера: {side} {amount}")
-            market_order = self.exchange.create_order(
-                symbol=self.symbol,
-                type='market',
-                side=side,
-                amount=amount
-            )
-            order_id = market_order.get('id', 'N/A')
+        # 💰 Устанавливаем плечо 10x при старте
+        self._set_leverage(10)
+        
+        # 📊 Х
             print(f"✅ Рыночный ордер исполнен: {order_id}")
 
             # Получаем цену входа
