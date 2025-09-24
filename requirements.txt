@@ -2,7 +2,7 @@ Flask==3.0.3
 ccxt==4.2.75
 pandas==2.2.2
 numpy==1.26.4
-ta==0.10.0
+ta==0.10.3
 prophet==1.1.5
 python-telegram-bot==20.7
 python-dotenv==1.0.1
