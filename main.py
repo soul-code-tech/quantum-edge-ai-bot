@@ -1,6 +1,5 @@
-# main.py — ФИНАЛЬНАЯ РАБОЧАЯ ВЕРСИЯ (порт + плечо + 10 пар)
 from flask import Flask
-import threading
+import threading  # ✅ ЭТО НУЖНО! БЕЗ ЭТОГО — ПАДЕНИЕ!
 import time
 import os
 from data_fetcher import get_bars
@@ -52,7 +51,7 @@ last_trailing_update = {}
 last_test_order = 0
 total_trades = 0
 
-def trading_bot():
+def run_strategy():
     global last_signal_time, last_trailing_update, last_test_order, total_trades
 
     while True:
@@ -148,7 +147,7 @@ def trading_bot():
 def start_bot_once():
     global _bot_started
     if not _bot_started:
-        thread = threading.Thread(target=trading_bot, daemon=True)
+        thread = threading.Thread(target=run_strategy, daemon=True)
         thread.start()
         print("🚀 [СИСТЕМА] Фоновый торговый бот успешно запущен!")
         _bot_started = True
@@ -158,7 +157,7 @@ def start_bot_once():
 def wake_up():
     return "✅ Quantum Edge AI Bot is LIVE on 10 cryptos!", 200
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    print(f"🌐 Flask сервер запущен на порту {port}")
-    app.run(host='0.0.0.0', port=port)  # ← ВАЖНО: bind to 0.0.0.0
+# ✅ ЗАПУСКАЕМ FLASK — БЕЗ if __name__ == "__main__"
+port = int(os.environ.get("PORT", 10000))
+print(f"🌐 Flask сервер запущен на порту {port}")
+app.run(host='0.0.0.0', port=port)
