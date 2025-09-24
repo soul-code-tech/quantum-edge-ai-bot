@@ -1,5 +1,10 @@
 # main.py — Полная рабочая версия (без Telegram, с логами, с тестовыми ордерами)
-
+# Добавь в начало функции trading_bot() — для проверки доступных символов
+print("\n🔍 Проверяем доступные символы на BingX...")
+markets = trader.exchange.fetch_markets()
+for m in markets:
+    if 'BTC' in m['symbol'] and m['type'] == 'swap':
+        print(f"✅ {m['symbol']} — {m['id']}")
 from flask import Flask
 import threading
 import time
