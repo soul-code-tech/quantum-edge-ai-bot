@@ -1,4 +1,4 @@
-# trader.py — ФИНАЛЬНАЯ, ПРОВЕРЕННАЯ ВЕРСИЯ — ОТСТУПЫ ИСПРАВЛЕНЫ
+# trader.py — ФИНАЛЬНАЯ ВЕРСИЯ (исправленный метод установки плеча)
 import ccxt
 import os
 import time
@@ -29,11 +29,12 @@ class BingXTrader:
         self.trailing_distance_percent = 1.0  # 1% от цены
 
     def _set_leverage(self, leverage):
-        """Устанавливает плечо для пары (один раз при старте)"""
+        """Устанавливает плечо для пары (BingX требует camelCase!)"""
         try:
             # BingX требует символ без "-"
             symbol_for_api = self.symbol.replace('-', '')
-            self.exchange.fapiPrivate_post_leverage({
+            # ✅ ИСПРАВЛЕНО: fapiPrivatePostLeverage — именно так!
+            self.exchange.fapiPrivatePostLeverage({
                 'symbol': symbol_for_api,
                 'leverage': leverage
             })
@@ -70,7 +71,7 @@ class BingXTrader:
                 ticker = self.exchange.fetch_ticker(self.symbol)
                 entry_price = ticker['last']
 
-            # ✅ Рассчёт TP/SL с учётом комиссий (0.2% общая потеря)
+            # ✅ Рассчёт TP/SL
             if side == 'buy':
                 stop_loss_price = entry_price * (1 - stop_loss_percent / 100)
                 take_profit_price = entry_price * (1 + take_profit_percent / 100)
@@ -84,7 +85,7 @@ class BingXTrader:
             print(f"⛔ Отправка стоп-лосса (stop_market): {stop_loss_price:.2f} ({stop_loss_percent}%)")
             print(f"🎯 Отправка тейк-профита (limit): {take_profit_price:.2f} ({take_profit_percent}%)")
 
-            # ✅ Отправляем ордера с reduceOnly=True — это ключ!
+            # ✅ Отправляем ордера с reduceOnly=True
             self.exchange.create_order(
                 symbol=self.symbol,
                 type='stop_market',
@@ -102,7 +103,7 @@ class BingXTrader:
                 params={'reduceOnly': True}
             )
 
-            # 📦 Сохраняем позицию для трейлинга
+            # 📦 Сохраняем позицию
             self.position = {
                 'side': side,
                 'entry_price': entry_price,
@@ -110,7 +111,7 @@ class BingXTrader:
                 'last_trailing_price': entry_price
             }
 
-            print(f"✅ УСПЕХ! Ордер {side} на {self.symbol} отправлен. Комиссия учтена.")
+            print(f"✅ УСПЕХ! Ордер {side} на {self.symbol} отправлен.")
             return market_order
 
         except Exception as e:
