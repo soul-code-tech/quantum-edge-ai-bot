@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class BingXTrader:
-    def __init__(self, symbol='BTC/USDT', use_demo=False):
+    def __init__(self, symbol='BTC-USDT', use_demo=False):
         self.symbol = symbol
         self.use_demo = use_demo  # True = VST демо, False = реал
         self.exchange = ccxt.bingx({
