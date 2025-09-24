@@ -1,4 +1,4 @@
-# trader.py — ИСПРАВЛЕННАЯ ВЕРСИЯ
+# trader.py — ИСПРАВЛЕННАЯ И НАДЕЖНАЯ ВЕРСИЯ
 import ccxt
 import os
 import time
@@ -22,7 +22,6 @@ class BingXTrader:
     def place_order(self, side, amount, stop_loss_price, take_profit_price):
         try:
             print(f"📤 Отправка рыночного ордера: {side} {amount}")
-            # Отправляем рыночный ордер
             market_order = self.exchange.create_order(
                 symbol=self.symbol,
                 type='market',
@@ -32,11 +31,29 @@ class BingXTrader:
             order_id = market_order.get('id', 'N/A')
             print(f"✅ Рыночный ордер исполнен: {order_id}")
 
-            # ⏳ Ждём 2 секунды — чтобы позиция зафиксировалась в системе
-            print("⏳ Ждём 2 секунды, чтобы позиция открылась...")
-            time.sleep(2)
+            # 🔍 Активно ждём, пока позиция появится — максимум 10 секунд
+            print("🔍 Проверяем, открылась ли позиция...")
+            max_attempts = 10
+            for attempt in range(max_attempts):
+                time.sleep(1)  # ждём 1 секунду между проверками
+                positions = self.exchange.fetch_positions([self.symbol])
+                open_position = None
+                for pos in positions:
+                    if float(pos['contracts']) > 0:
+                        open_position = pos
+                        break
 
-            # Теперь создаём стоп-лосс и тейк-профит
+                if open_position:
+                    print(f"🎯 Позиция открылась! Объём: {open_position['contracts']} BTC")
+                    break
+                else:
+                    print(f"⏳ Позиция ещё не открылась... ({attempt + 1}/10)")
+
+            if not open_position:
+                print("❌ ОШИБКА: Позиция не открылась за 10 секунд. Возможно, ордер не исполнился.")
+                return None
+
+            # ✅ Теперь позиция точно есть — создаём стоп и тейк
             print(f"⛔ Отправка стоп-лосса: {stop_loss_price}")
             self.exchange.create_order(
                 symbol=self.symbol,
@@ -61,7 +78,7 @@ class BingXTrader:
         except Exception as e:
             error_str = str(e)
             if "position not exist" in error_str:
-                print("❌ ОШИБКА: Позиция ещё не открылась — попробуйте увеличить задержку (time.sleep)")
+                print("❌ ОШИБКА: Позиция не найдена — возможно, ордер не исполнился или был отменён.")
             else:
                 print(f"❌ Полная ошибка API: {type(e).__name__}: {error_str}")
             return None
