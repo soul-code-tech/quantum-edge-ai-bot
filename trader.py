@@ -53,25 +53,25 @@ class BingXTrader:
                 print("❌ ОШИБКА: Позиция не открылась за 10 секунд. Возможно, ордер не исполнился.")
                 return None
 
-            # ✅ Теперь позиция точно есть — создаём стоп и тейк
-            print(f"⛔ Отправка стоп-лосса: {stop_loss_price}")
-            self.exchange.create_order(
-                symbol=self.symbol,
-                type='stop',
-                side='sell' if side == 'buy' else 'buy',
-                amount=amount,
-                price=stop_loss_price,
-                params={'stopPrice': stop_loss_price}
-            )
+         # ✅ Стоп-лосс — используем stop_market
+print(f"⛔ Отправка стоп-лосса (stop_market): {stop_loss_price}")
+self.exchange.create_order(
+    symbol=self.symbol,
+    type='stop_market',  # ← ВАЖНО! Именно так!
+    side='sell' if side == 'buy' else 'buy',
+    amount=amount,
+    params={'stopPrice': stop_loss_price}  # stopPrice — обязательно!
+)
 
-            print(f"🎯 Отправка тейк-профита: {take_profit_price}")
-            self.exchange.create_order(
-                symbol=self.symbol,
-                type='limit',
-                side='sell' if side == 'buy' else 'buy',
-                amount=amount,
-                price=take_profit_price
-            )
+# ✅ Тейк-профит — используем limit (это правильно)
+print(f"🎯 Отправка тейк-профита (limit): {take_profit_price}")
+self.exchange.create_order(
+    symbol=self.symbol,
+    type='limit',  # ← Это правильно для тейк-профита
+    side='sell' if side == 'buy' else 'buy',
+    amount=amount,
+    price=take_profit_price
+)
 
             return market_order
 
