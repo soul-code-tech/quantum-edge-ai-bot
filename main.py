@@ -82,10 +82,16 @@ def trading_bot():
             time.sleep(60)
 
 # Запускаем бота в фоновом потоке при старте приложения
-@app.before_first_request
-def start_bot():
-    thread = threading.Thread(target=trading_bot, daemon=True)
-    thread.start()
+_bot_started = False
+
+@app.before_request
+def start_bot_once():
+    global _bot_started
+    if not _bot_started:
+        thread = threading.Thread(target=trading_bot, daemon=True)
+        thread.start()
+        print("🚀 [СИСТЕМА] Фоновый поток бота запущен.")
+        _bot_started = True
 
 # Эндпоинт для "пробуждения" сервиса
 @app.route('/')
