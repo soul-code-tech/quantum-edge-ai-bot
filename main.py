@@ -1,107 +1,89 @@
-# main.py — Полная рабочая версия (без Telegram, с логами, с тестовыми ордерами)
-from flask import Flask
-import threading
-import time
+# trader.py — ФИНАЛЬНАЯ, ПРОВЕРЕННАЯ, РАБОЧАЯ ВЕРСИЯ (с правильным именем класса)
+import ccxt
 import os
-from data_fetcher import get_bars
-from strategy import calculate_strategy_signals
-from trader import BingXTrader
+import time
+from dotenv import load_dotenv
 
-app = Flask(__name__)
-bot_running = False
-_bot_started = False  # Флаг для запуска бота один раз
+load_dotenv()
 
-def trading_bot():
-    global bot_running
-    if bot_running:
-        return
-    bot_running = True
+class BingXTrader:  # ← ЭТО ДОЛЖНО БЫТЬ ТОЧНО ТАК! НЕ ИЗМЕНЯЙ ИМЯ!
+    def __init__(self, symbol='BTC-USDT', use_demo=False):
+        self.symbol = symbol
+        self.use_demo = use_demo
+        self.exchange = ccxt.bingx({
+            'apiKey': os.getenv('BINGX_API_KEY'),
+            'secret': os.getenv('BINGX_SECRET_KEY'),
+            'options': {'defaultType': 'swap'},
+            'enableRateLimit': True,
+        })
+        if use_demo:
+            self.exchange.set_sandbox_mode(True)
 
-    print("✅ [СТАРТ] Quantum Edge AI Bot запущен. Анализируем рынок...")
-    print("📊 Логи будут обновляться каждую минуту. Ордера в демо — каждые 5 минут.")
-
-    symbol = 'BTC-USDT'
-    trader = BingXTrader(symbol=symbol, use_demo=True)  # Демо-режим (VST)
-    last_signal_time = 0
-    signal_cooldown = 3600  # 1 час между сигналами
-    last_forced_order = 0
-    force_order_interval = 300  # Принудительный ордер каждые 5 минут (для теста)
-
-    while True:
+    def place_order(self, side, amount, stop_loss_percent=1.5, take_profit_percent=3.0):
         try:
-            current_time = time.time()
-            print(f"\n--- [{time.strftime('%Y-%m-%d %H:%M:%S')}] ---")
-            print("🔄 Получаем рыночные данные с BingX...")
+            print(f"📤 Отправка рыночного ордера: {side} {amount}")
+            market_order = self.exchange.create_order(
+                symbol=self.symbol,
+                type='market',
+                side=side,
+                amount=amount
+            )
+            order_id = market_order.get('id', 'N/A')
+            print(f"✅ Рыночный ордер исполнен: {order_id}")
 
-            # Получаем последние 100 свечей
-            df = get_bars(symbol, '1h', 100)
-            if df is None or len(df) < 50:
-                print("❌ Не удалось получить достаточно данных. Повтор через 60 сек.")
-                time.sleep(60)
-                continue
+            # Получаем цену входа из ордера
+            entry_price = market_order.get('price', None)
+            if not entry_price:
+                ticker = self.exchange.fetch_ticker(self.symbol)
+                entry_price = ticker['last']
 
-            # Рассчитываем сигналы стратегии
-            df = calculate_strategy_signals(df, 60)
-            current_price = df['close'].iloc[-1]
-            buy_signal = df['buy_signal'].iloc[-1]
-            sell_signal = df['sell_signal'].iloc[-1]
-            long_score = df['long_score'].iloc[-1]
-            short_score = df['short_score'].iloc[-1]
+            # Рассчитываем цены TP/SL в процентах
+            if side == 'buy':
+                stop_loss_price = entry_price * (1 - stop_loss_percent / 100)
+                take_profit_price = entry_price * (1 + take_profit_percent / 100)
+            else:  # sell
+                stop_loss_price = entry_price * (1 + stop_loss_percent / 100)
+                take_profit_price = entry_price * (1 - take_profit_percent / 100)
 
-            print(f"📈 Текущая цена: {current_price:.4f} USDT")
-            print(f"📊 Скоры: Long={long_score}/6 | Short={short_score}/6")
-            print(f"🚦 Сигналы: Buy={buy_signal} | Sell={sell_signal}")
+            print(f"📊 Цена входа: {entry_price:.2f}")
+            print(f"⛔ Отправка стоп-лосса (stop_market): {stop_loss_price:.2f} ({stop_loss_percent}%)")
+            print(f"🎯 Отправка тейк-профита (limit): {take_profit_price:.2f} ({take_profit_percent}%)")
 
-            # Принудительный ордер каждые 5 минут (для проверки подключения к BingX)
-            if current_time - last_forced_order > force_order_interval:
-                print("\n🎯 [ТЕСТ] Принудительный рыночный ордер BUY (демо-режим)")
-                side = 'buy'
-                amount = 0.001  # Очень маленькая позиция для теста
-                atr = df['atr'].iloc[-1] if 'atr' in df.columns else 50
-                stop_loss = current_price - atr * 1.5
-                take_profit = current_price + atr * 3
+            # Отправляем стоп-лосс
+            self.exchange.create_order(
+                symbol=self.symbol,
+                type='stop_market',
+                side='sell' if side == 'buy' else 'buy',
+                amount=amount,
+                params={
+                    'stopPrice': stop_loss_price,
+                    'reduceOnly': True
+                }
+            )
 
-                print(f"💸 Открываем позицию: {side.upper()} {amount} BTC по ~{current_price:.2f}")
-                order = trader.place_order(side, amount, stop_loss, take_profit)
-                if order:
-                    print(f"✅ УСПЕХ! Ордер исполнен. ID: {order.get('id', 'N/A')}")
-                    print(f"⛔ Стоп-лосс установлен на: {stop_loss:.2f}")
-                    print(f"🎯 Тейк-профит установлен на: {take_profit:.2f}")
-                else:
-                    print("❌ ОШИБКА: Не удалось открыть ордер. Проверь ключи API и разрешения.")
+            # Отправляем тейк-профит
+            self.exchange.create_order(
+                symbol=self.symbol,
+                type='limit',
+                side='sell' if side == 'buy' else 'buy',
+                amount=amount,
+                price=take_profit_price,
+                params={'reduceOnly': True}
+            )
 
-                last_forced_order = current_time
-                print("⏳ Следующий тестовый ордер через 5 минут...")
-
-            # Обычная логика стратегии (если хочешь включить — раскомментируй)
-            # if (buy_signal or sell_signal) and (current_time - last_signal_time > signal_cooldown):
-            #     # ... твоя логика ...
-            #     last_signal_time = current_time
-
-            print("💤 Ждём 60 секунд до следующего анализа...")
-            time.sleep(60)
+            print("✅ УСПЕХ! Все ордера отправлены (TP/SL привязаны к цене входа)")
+            return market_order
 
         except Exception as e:
-            print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {type(e).__name__}: {str(e)}")
-            print("⏳ Перезапуск анализа через 60 секунд...")
-            time.sleep(60)
-
-# Запускаем бота при первом запросе
-@app.before_request
-def start_bot_once():
-    global _bot_started
-    if not _bot_started:
-        thread = threading.Thread(target=trading_bot, daemon=True)
-        thread.start()
-        print("🚀 [СИСТЕМА] Фоновый торговый бот успешно запущен!")
-        _bot_started = True
-
-# Эндпоинт для "пробуждения" сервиса (UptimeRobot)
-@app.route('/')
-def wake_up():
-    return "✅ Quantum Edge AI Bot is LIVE and analyzing market!", 200
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    print(f"🌐 Flask сервер запущен на порту {port}")
-    app.run(host='0.0.0.0', port=port)
+            error_str = str(e)
+            if "position not exist" in error_str:
+                print("❌ ОШИБКА: Позиция не найдена — возможно, ордер не исполнился.")
+            elif "Invalid order quantity" in error_str:
+                print("❌ ОШИБКА: Неверный размер ордера. Убедись, что amount > 0.")
+            elif "Invalid order type" in error_str:
+                print("❌ ОШИБКА: Неверный тип ордера. Используй 'stop_market' и 'limit'.")
+            elif "reduceOnly" in error_str:
+                print("❌ ОШИБКА: reduceOnly требует существующей позиции — проверь, что ордер исполнен.")
+            else:
+                print(f"❌ Полная ошибка API: {type(e).__name__}: {error_str}")
+            return None
