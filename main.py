@@ -47,6 +47,14 @@ def trading_bot():
             sell_signal = df['sell_signal'].iloc[-1]
             long_score = df['long_score'].iloc[-1]
             short_score = df['short_score'].iloc[-1]
+            # ✅ LSTM-фильтр: используем последние 200 свечей для прогноза
+            if len(df) >= 200:
+               lstm = LSTMPredictor(lookback=60)
+               lstm_prob = lstm.predict_next(df)
+               lstm_confident = lstm_prob > 0.60  # Уверенность > 60%
+            print(f"🧠 LSTM: вероятность роста {lstm_prob:.2%} → {'✅ ДОПУСТИМ' if lstm_confident else '❌ ОТКЛОНЕНО'}")
+            else:
+               lstm_confident = True  # Если мало данных — разрешаем вход
 
             print(f"📈 Текущая цена: {current_price:.4f} USDT")
             print(f"📊 Скоры: Long={long_score}/6 | Short={short_score}/6")
