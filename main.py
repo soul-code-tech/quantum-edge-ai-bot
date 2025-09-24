@@ -22,7 +22,7 @@ RISK_PERCENT = 1.0          # Риск 1% от депозита на сделк�
 STOP_LOSS_PCT = 1.5         # Стоп-лосс: 1.5% от цены входа
 TAKE_PROFIT_PCT = 3.0       # Тейк-профит: 3% от цены входа
 TRAILING_PCT = 1.0          # Трейлинг-стоп: отслеживает цену с отставанием 1%
-LSTM_CONFIDENCE = 0.60      # LSTM должен быть уверен на 60%+
+LSTM_CONFIDENCE = 0.65      # LSTM должен быть уверен на 65%+
 TIMEFRAME = '1h'
 LOOKBACK = 200              # Свечей для LSTM
 SIGNAL_COOLDOWN = 3600      # 1 час между сигналами на одну пару
@@ -73,6 +73,8 @@ def run_strategy():
                 current_price = df['close'].iloc[-1]
                 buy_signal = df['buy_signal'].iloc[-1]
                 sell_signal = df['sell_signal'].iloc[-1]
+                long_score = df['long_score'].iloc[-1]
+                short_score = df['short_score'].iloc[-1]
 
                 # Проверяем, не было ли сигнала недавно
                 last_time = last_signal_time.get(symbol, 0)
@@ -80,24 +82,25 @@ def run_strategy():
                     print(f"⏳ Кулдаун: {symbol} — пропускаем")
                     continue
 
-                # LSTM-фильтр
+                # ✅ LSTM-фильтр
                 lstm_prob = lstm_models[symbol].predict_next(df)
                 lstm_confident = lstm_prob > LSTM_CONFIDENCE
                 print(f"🧠 LSTM: {symbol} — {lstm_prob:.2%} → {'✅ ДОПУСТИМ' if lstm_confident else '❌ ОТКЛОНЕНО'}")
 
-                # ✅ ВХОД: только если сигнал и LSTM совпадают
-                if (buy_signal and lstm_confident) or (sell_signal and lstm_confident):
-                    side = 'buy' if buy_signal else 'sell'
-                    print(f"🎯 [СИГНАЛ] {side.upper()} на {symbol}")
+                # ✅ СИЛЬНЫЙ СИГНАЛ: стратегия + LSTM
+                strong_strategy = (buy_signal and long_score >= 5) or (sell_signal and short_score >= 5)
 
-                    # 💰 РИСК-МЕНЕДЖМЕНТ: размер позиции = (депозит × риск) / (ATR × 1.5)
+                if strong_strategy and lstm_confident:
+                    side = 'buy' if buy_signal else 'sell'
+                    print(f"🎯 [СИГНАЛ] {side.upper()} на {symbol} — сильный сигнал + LSTM уверен")
+
+                    # 💰 РИСК-МЕНЕДЖМЕНТ
                     atr = df['atr'].iloc[-1]
-                    equity = 100.0  # 💡 Ты можешь заменить на реальный депозит через API, но пока фиксировано
+                    equity = 100.0  # Можно заменить на реальный депозит через API
                     risk_amount = equity * (RISK_PERCENT / 100)
                     stop_distance = atr * 1.5
                     amount = risk_amount / stop_distance if stop_distance > 0 else 0.001
 
-                    # Ограничение размера — не торговать на мусорных монетах
                     if amount < 0.001:
                         amount = 0.001
 
@@ -118,24 +121,16 @@ def run_strategy():
                     else:
                         print(f"❌ ОШИБКА: Ордер не отправлен на {symbol}")
 
+                else:
+                    if buy_signal or sell_signal:
+                        print(f"⚠️ {symbol}: Сигнал есть, но не достаточно сильный (score={long_score if buy_signal else short_score}) или LSTM не уверен ({lstm_prob:.2%}) — пропускаем.")
+
             # ✅ ТРЕЙЛИНГ-СТОП — обновляем каждые 5 минут для всех пар
             if current_time - last_trailing_update.get('global', 0) > UPDATE_TRAILING_INTERVAL:
                 print("\n🔄 Обновление трейлинг-стопов для всех пар...")
                 for symbol in SYMBOLS:
                     traders[symbol].update_trailing_stop()
                 last_trailing_update['global'] = current_time
-
-            # ✅ ТЕСТОВЫЙ ОРДЕР — раз в 5 минут (для проверки связи)
-            if current_time - last_test_order > TEST_INTERVAL:
-                test_symbol = SYMBOLS[0]  # Тестируем первую пару
-                print(f"\n🎯 [ТЕСТ] Принудительный BUY на {test_symbol} для проверки связи...")
-                traders[test_symbol].place_order(
-                    side='buy',
-                    amount=0.001,
-                    stop_loss_percent=STOP_LOSS_PCT,
-                    take_profit_percent=TAKE_PROFIT_PCT
-                )
-                last_test_order = current_time
 
             # ✅ ПАУЗА — 60 секунд между циклами
             print("\n💤 Ждём 60 секунд до следующего цикла...")
@@ -145,22 +140,3 @@ def run_strategy():
             print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {type(e).__name__}: {str(e)}")
             print("⏳ Перезапуск цикла через 60 секунд...")
             time.sleep(60)
-
-# Запуск бота при первом запросе
-@app.before_request
-def start_bot_once():
-    global _bot_started
-    if not _bot_started:
-        thread = threading.Thread(target=run_strategy, daemon=True)
-        thread.start()
-        print("🚀 [СИСТЕМА] Многопарный бот запущен!")
-        _bot_started = True
-
-@app.route('/')
-def wake_up():
-    return "✅ Quantum Edge AI Bot is LIVE on 10 cryptos!", 200
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    print(f"🌐 Flask сервер запущен на порту {port}")
-    app.run(host='0.0.0.0', port=port)
