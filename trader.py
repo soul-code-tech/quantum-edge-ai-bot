@@ -1,4 +1,4 @@
-# trader.py — ИСПРАВЛЕННАЯ И НАДЕЖНАЯ ВЕРСИЯ
+# trader.py — ФИНАЛЬНАЯ, РАБОЧАЯ ВЕРСИЯ
 import ccxt
 import os
 import time
@@ -31,11 +31,10 @@ class BingXTrader:
             order_id = market_order.get('id', 'N/A')
             print(f"✅ Рыночный ордер исполнен: {order_id}")
 
-            # 🔍 Активно ждём, пока позиция появится — максимум 10 секунд
             print("🔍 Проверяем, открылась ли позиция...")
             max_attempts = 10
             for attempt in range(max_attempts):
-                time.sleep(1)  # ждём 1 секунду между проверками
+                time.sleep(1)
                 positions = self.exchange.fetch_positions([self.symbol])
                 open_position = None
                 for pos in positions:
@@ -47,38 +46,39 @@ class BingXTrader:
                     print(f"🎯 Позиция открылась! Объём: {open_position['contracts']} BTC")
                     break
                 else:
-                    print(f"⏳ Позиция ещё не открылась... ({attempt + 1}/10)")
+                    print(f"⏳ Позиция ещё не открылась... ({attempt + 1}/{max_attempts})")
 
             if not open_position:
                 print("❌ ОШИБКА: Позиция не открылась за 10 секунд. Возможно, ордер не исполнился.")
                 return None
 
-         # ✅ Стоп-лосс — используем stop_market
-print(f"⛔ Отправка стоп-лосса (stop_market): {stop_loss_price}")
-self.exchange.create_order(
-    symbol=self.symbol,
-    type='stop_market',  # ← ВАЖНО! Именно так!
-    side='sell' if side == 'buy' else 'buy',
-    amount=amount,
-    params={'stopPrice': stop_loss_price}  # stopPrice — обязательно!
-)
+            print(f"⛔ Отправка стоп-лосса (stop_market): {stop_loss_price}")
+            self.exchange.create_order(
+                symbol=self.symbol,
+                type='stop_market',  # ✅ ВАЖНО: именно так!
+                side='sell' if side == 'buy' else 'buy',
+                amount=amount,
+                params={'stopPrice': stop_loss_price}
+            )
 
-# ✅ Тейк-профит — используем limit (это правильно)
-print(f"🎯 Отправка тейк-профита (limit): {take_profit_price}")
-self.exchange.create_order(
-    symbol=self.symbol,
-    type='limit',  # ← Это правильно для тейк-профита
-    side='sell' if side == 'buy' else 'buy',
-    amount=amount,
-    price=take_profit_price
-)
+            print(f"🎯 Отправка тейк-профита (limit): {take_profit_price}")
+            self.exchange.create_order(
+                symbol=self.symbol,
+                type='limit',
+                side='sell' if side == 'buy' else 'buy',
+                amount=amount,
+                price=take_profit_price
+            )
 
+            print("✅ УСПЕХ! Все ордера отправлены.")
             return market_order
 
         except Exception as e:
             error_str = str(e)
             if "position not exist" in error_str:
                 print("❌ ОШИБКА: Позиция не найдена — возможно, ордер не исполнился или был отменён.")
+            elif "Invalid order type" in error_str:
+                print("❌ ОШИБКА: Неверный тип ордера. Убедись, что используешь 'stop_market'.")
             else:
                 print(f"❌ Полная ошибка API: {type(e).__name__}: {error_str}")
             return None
