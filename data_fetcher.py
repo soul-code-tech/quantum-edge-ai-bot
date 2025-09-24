@@ -2,7 +2,7 @@
 import ccxt
 import pandas as pd
 
-def get_bars(symbol='BTC/USDT', timeframe='1h', limit=100):
+def get_bars(symbol='BTC-USDT', timeframe='1h', limit=100):
     exchange = ccxt.bingx({
         'options': {'defaultType': 'swap'},
         'enableRateLimit': True,
