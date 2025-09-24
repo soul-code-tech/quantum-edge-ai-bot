@@ -26,7 +26,7 @@ def trading_bot():
     print("✅ [СТАРТ] Quantum Edge AI Bot запущен. Анализируем рынок...")
     print("📊 Логи будут обновляться каждую минуту. Ордера в демо — каждые 5 минут.")
 
-    symbol = 'BTC/USDT'
+    symbol = 'BTC-USDT'
     trader = BingXTrader(symbol=symbol, use_demo=True)  # Демо-режим (VST)
     last_signal_time = 0
     signal_cooldown = 3600  # 1 час между сигналами
