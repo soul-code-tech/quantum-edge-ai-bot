@@ -1,138 +1,164 @@
-# main.py — ФИНАЛЬНАЯ ВЕРСИЯ: LSTM + ТРЕЙЛИНГ-СТОП + РАБОТАЕТ НА RENDER
+# main.py — ФИНАЛЬНАЯ ВЕРСИЯ: 10 КРИПТОПАР + LSTM + ТРЕЙЛИНГ-СТОП + РИСК-МЕНЕДЖМЕНТ
 from flask import Flask
-import threading
 import time
 import os
 from data_fetcher import get_bars
 from strategy import calculate_strategy_signals
 from trader import BingXTrader
+from lstm_model import LSTMPredictor
 
 app = Flask(__name__)
-bot_running = False
 _bot_started = False
 
-def trading_bot():
-    global bot_running
-    if bot_running:
-        return
-    bot_running = True
+# 📊 СПИСОК ПАР — ДОБАВЬ/УБЕРИ ПАРЫ ПО ЖЕЛАНИЮ
+SYMBOLS = [
+    'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT',
+    'XRP-USDT', 'DOGE-USDT', 'TON-USDT', 'AVAX-USDT',
+    'SHIB-USDT', 'LINK-USDT', 'PENGU-USDT'
+]
 
-    print("✅ [СТАРТ] Quantum Edge AI Bot запущен. Анализируем рынок...")
-    print("📊 Логи будут обновляться каждую минуту. Ордера в демо — каждые 5 минут.")
-    print("🧠 LSTM-фильтр и трейлинг-стоп активированы.")
+# Параметры торговли
+RISK_PERCENT = 1.0          # Риск 1% от депозита на сделку
+STOP_LOSS_PCT = 1.5         # Стоп-лосс: 1.5% от цены входа
+TAKE_PROFIT_PCT = 3.0       # Тейк-профит: 3% от цены входа
+TRAILING_PCT = 1.0          # Трейлинг-стоп: отслеживает цену с отставанием 1%
+LSTM_CONFIDENCE = 0.60      # LSTM должен быть уверен на 60%+
+TIMEFRAME = '1h'
+LOOKBACK = 200              # Свечей для LSTM
+SIGNAL_COOLDOWN = 3600      # 1 час между сигналами на одну пару
+TEST_INTERVAL = 300         # Тестовый ордер каждые 5 минут
+UPDATE_TRAILING_INTERVAL = 300  # Обновление трейлинга каждые 5 минут
 
-    symbol = 'BTC-USDT'
-    trader = BingXTrader(symbol=symbol, use_demo=True)  # Демо-режим (VST)
-    
-    last_signal_time = 0
-    signal_cooldown = 3600  # 1 час между сигналами
-    last_forced_order = 0
-    force_order_interval = 300  # Принудительный ордер каждые 5 минут
-    last_trailing_update = 0  # Для трейлинга
+# Инициализация моделей и трейдеров
+lstm_models = {}
+traders = {}
 
-    # Инициализируем LSTM-модель (будет обучаться при первом вызове)
-    from lstm_model import LSTMPredictor
-    lstm = LSTMPredictor(lookback=60)
+for symbol in SYMBOLS:
+    lstm_models[symbol] = LSTMPredictor(lookback=60)
+    traders[symbol] = BingXTrader(symbol=symbol, use_demo=True)
+
+print("✅ [СТАРТ] Quantum Edge AI Bot запущен на 10 криптопарах")
+print(f"📊 ПАРЫ: {', '.join(SYMBOLS)}")
+print(f"🧠 LSTM: порог уверенности {LSTM_CONFIDENCE * 100}%")
+print(f"💸 Риск: {RISK_PERCENT}% от депозита на сделку")
+print(f"⛔ Стоп-лосс: {STOP_LOSS_PCT}% | 🎯 Тейк-профит: {TAKE_PROFIT_PCT}%")
+print(f"📈 Трейлинг-стоп: {TRAILING_PCT}% от цены")
+print(f"⏳ Кулдаун: {SIGNAL_COOLDOWN} сек. на пару")
+
+# --- ГЛОБАЛЬНЫЕ СТАТИСТИКИ ---
+last_signal_time = {}     # Время последнего сигнала по паре
+last_trailing_update = {} # Время последнего трейлинга по паре
+last_test_order = 0       # Время последнего тестового ордера
+total_trades = 0          # Общее количество сделок
+
+def run_strategy():
+    global last_signal_time, last_trailing_update, last_test_order, total_trades
 
     while True:
         try:
             current_time = time.time()
-            print(f"\n--- [{time.strftime('%Y-%m-%d %H:%M:%S')}] ---")
-            print("🔄 Получаем рыночные данные с BingX...")
 
-            # Получаем 200 свечей для LSTM и стратегии
-            df = get_bars(symbol, '1h', 200)
-            if df is None or len(df) < 100:
-                print("❌ Не удалось получить достаточно данных. Ждём 60 сек.")
-                time.sleep(60)
-                continue
+            # 🔁 Обрабатываем каждую пару по очереди
+            for symbol in SYMBOLS:
+                print(f"\n--- [{time.strftime('%H:%M:%S')}] {symbol} ---")
 
-            # Рассчитываем сигналы стратегии
-            df = calculate_strategy_signals(df, 60)
-            current_price = df['close'].iloc[-1]
-            buy_signal = df['buy_signal'].iloc[-1]
-            sell_signal = df['sell_signal'].iloc[-1]
-            long_score = df['long_score'].iloc[-1]
-            short_score = df['short_score'].iloc[-1]
-
-            print(f"📈 Текущая цена: {current_price:.4f} USDT")
-            print(f"📊 Скоры: Long={long_score}/6 | Short={short_score}/6")
-            print(f"🚦 Сигналы: Buy={buy_signal} | Sell={sell_signal}")
-
-            # ✅ LSTM-фильтр: предсказываем вероятность роста
-            lstm_prob = lstm.predict_next(df)
-            lstm_confident = lstm_prob > 0.60  # Уверенность > 60%
-            print(f"🧠 LSTM: вероятность роста {lstm_prob:.2%} → {'✅ ДОПУСТИМ' if lstm_confident else '❌ ОТКЛОНЕНО'}")
-
-            # ✅ ВХОД ТОЛЬКО ЕСЛИ: сигнал стратегии + LSTM подтверждает
-            if (buy_signal and lstm_confident) or (sell_signal and lstm_confident):
-                if current_time - last_signal_time < signal_cooldown:
-                    print("⏳ Кулдаун — пропускаем сигнал")
-                    time.sleep(60)
+                # Получаем данные
+                df = get_bars(symbol, TIMEFRAME, LOOKBACK)
+                if df is None or len(df) < 100:
+                    print(f"❌ Недостаточно данных для {symbol}")
                     continue
 
-                side = 'buy' if buy_signal else 'sell'
-                amount = 0.001  # Для теста — можно увеличить
+                # Рассчитываем стратегию
+                df = calculate_strategy_signals(df, 60)
+                current_price = df['close'].iloc[-1]
+                buy_signal = df['buy_signal'].iloc[-1]
+                sell_signal = df['sell_signal'].iloc[-1]
 
-                print(f"\n🎯 [СИГНАЛ] {side.upper()} с подтверждением LSTM!")
-                order = trader.place_order(
-                    side=side,
-                    amount=amount,
-                    stop_loss_percent=1.5,
-                    take_profit_percent=3.0
-                )
+                # Проверяем, не было ли сигнала недавно
+                last_time = last_signal_time.get(symbol, 0)
+                if current_time - last_time < SIGNAL_COOLDOWN:
+                    print(f"⏳ Кулдаун: {symbol} — пропускаем")
+                    continue
 
-                if order:
-                    print("✅ УСПЕХ! Ордер отправлен. Проверь демо-счёт BingX.")
-                else:
-                    print("❌ ОШИБКА: Ордер не отправлен. Проверь логи выше.")
+                # LSTM-фильтр
+                lstm_prob = lstm_models[symbol].predict_next(df)
+                lstm_confident = lstm_prob > LSTM_CONFIDENCE
+                print(f"🧠 LSTM: {symbol} — {lstm_prob:.2%} → {'✅ ДОПУСТИМ' if lstm_confident else '❌ ОТКЛОНЕНО'}")
 
-                last_signal_time = current_time
+                # ✅ ВХОД: только если сигнал и LSTM совпадают
+                if (buy_signal and lstm_confident) or (sell_signal and lstm_confident):
+                    side = 'buy' if buy_signal else 'sell'
+                    print(f"🎯 [СИГНАЛ] {side.upper()} на {symbol}")
 
-            # ✅ Трейлинг-стоп: обновляем каждые 5 минут
-            if current_time - last_trailing_update > 300:
-                trader.update_trailing_stop()
-                last_trailing_update = current_time
+                    # 💰 РИСК-МЕНЕДЖМЕНТ: размер позиции = (депозит × риск) / (ATR × 1.5)
+                    atr = df['atr'].iloc[-1]
+                    equity = 100.0  # 💡 Ты можешь заменить на реальный депозит через API, но пока фиксировано
+                    risk_amount = equity * (RISK_PERCENT / 100)
+                    stop_distance = atr * 1.5
+                    amount = risk_amount / stop_distance if stop_distance > 0 else 0.001
 
-            # ✅ Принудительный тестовый ордер каждые 5 минут
-            if current_time - last_forced_order > force_order_interval:
-                print("\n🎯 [ТЕСТ] Принудительный рыночный ордер BUY (демо-режим)")
-                order = trader.place_order(
+                    # Ограничение размера — не торговать на мусорных монетах
+                    if amount < 0.001:
+                        amount = 0.001
+
+                    print(f"📊 Размер позиции: {amount:.6f} {symbol.split('-')[0]} | ATR: {atr:.4f}")
+
+                    # Открываем ордер
+                    order = traders[symbol].place_order(
+                        side=side,
+                        amount=amount,
+                        stop_loss_percent=STOP_LOSS_PCT,
+                        take_profit_percent=TAKE_PROFIT_PCT
+                    )
+
+                    if order:
+                        print(f"✅ УСПЕХ! Ордер {side} на {symbol} отправлен.")
+                        total_trades += 1
+                        last_signal_time[symbol] = current_time
+                    else:
+                        print(f"❌ ОШИБКА: Ордер не отправлен на {symbol}")
+
+            # ✅ ТРЕЙЛИНГ-СТОП — обновляем каждые 5 минут для всех пар
+            if current_time - last_trailing_update.get('global', 0) > UPDATE_TRAILING_INTERVAL:
+                print("\n🔄 Обновление трейлинг-стопов для всех пар...")
+                for symbol in SYMBOLS:
+                    traders[symbol].update_trailing_stop()
+                last_trailing_update['global'] = current_time
+
+            # ✅ ТЕСТОВЫЙ ОРДЕР — раз в 5 минут (для проверки связи)
+            if current_time - last_test_order > TEST_INTERVAL:
+                test_symbol = SYMBOLS[0]  # Тестируем первую пару
+                print(f"\n🎯 [ТЕСТ] Принудительный BUY на {test_symbol} для проверки связи...")
+                traders[test_symbol].place_order(
                     side='buy',
                     amount=0.001,
-                    stop_loss_percent=1.5,
-                    take_profit_percent=3.0
+                    stop_loss_percent=STOP_LOSS_PCT,
+                    take_profit_percent=TAKE_PROFIT_PCT
                 )
-                if order:
-                    print("✅ УСПЕХ! Тестовый ордер отправлен.")
-                else:
-                    print("❌ ОШИБКА: Тестовый ордер не отправлен.")
+                last_test_order = current_time
 
-                last_forced_order = current_time
-                print("⏳ Следующий тестовый ордер через 5 минут...")
-
-            print("💤 Ждём 60 секунд до следующего анализа...")
+            # ✅ ПАУЗА — 60 секунд между циклами
+            print("\n💤 Ждём 60 секунд до следующего цикла...")
             time.sleep(60)
 
         except Exception as e:
             print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {type(e).__name__}: {str(e)}")
-            print("⏳ Перезапуск анализа через 60 секунд...")
+            print("⏳ Перезапуск цикла через 60 секунд...")
             time.sleep(60)
 
-# Запускаем бота при первом HTTP-запросе (для Render)
+# Запуск бота при первом запросе
 @app.before_request
 def start_bot_once():
     global _bot_started
     if not _bot_started:
-        thread = threading.Thread(target=trading_bot, daemon=True)
+        thread = threading.Thread(target=run_strategy, daemon=True)
         thread.start()
-        print("🚀 [СИСТЕМА] Фоновый торговый бот успешно запущен!")
+        print("🚀 [СИСТЕМА] Многопарный бот запущен!")
         _bot_started = True
 
-# Эндпоинт для "пробуждения" сервиса (UptimeRobot)
 @app.route('/')
 def wake_up():
-    return "✅ Quantum Edge AI Bot is LIVE and analyzing market!", 200
+    return "✅ Quantum Edge AI Bot is LIVE on 10 cryptos!", 200
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
