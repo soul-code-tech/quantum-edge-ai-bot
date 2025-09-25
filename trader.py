@@ -20,8 +20,11 @@ class BingXTrader:
         if use_demo:
             self.exchange.set_sandbox_mode(True)
 
-        # 💰 Устанавливаем плечо при старте
-        self._set_leverage(leverage)
+       # ✅ ПРАВИЛЬНО — camelCase, без подчёркиваний
+       self.exchange.fapiPrivatePostLeverage({
+       'symbol': symbol_for_api,
+       'leverage': leverage
+        })
         
         # 📊 Храним текущую позицию и трейлинг
         self.position = None
