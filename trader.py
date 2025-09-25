@@ -123,9 +123,11 @@ class BingXTrader:
                 print(f"❌ Полная ошибка API {self.symbol}: {type(e).__name__}: {error_str}")
             return None
 
-    def update_trailing_stop(self):
+        def update_trailing_stop(self):
+        """Обновляет трейлинг-стоп для активной позиции"""
         if not self.position:
             return
+
         try:
             ticker = self.exchange.fetch_ticker(self.symbol)
             current_price = ticker['last']
@@ -134,4 +136,34 @@ class BingXTrader:
             if side == 'buy':
                 if current_price > self.position['last_trailing_price']:
                     new_trailing_price = current_price * (1 - self.trailing_distance_percent / 100)
-                    if new_trailing 
+                    if new_trailing_price > self.trailing_stop_price:
+                        self.trailing_stop_price = new_trailing_price
+                        print(f"📈 {self.symbol}: Трейлинг-стоп поднят: {self.trailing_stop_price:.2f}")
+                        self._cancel_all_stops()
+                        self.exchange.create_order(
+                            symbol=self.symbol,
+                            type='stop_market',
+                            side='sell',
+                            amount=self.position['amount'],
+                            params={'stopPrice': self.trailing_stop_price, 'reduceOnly': True}
+                        )
+                        self.position['last_trailing_price'] = current_price
+
+            elif side == 'sell':
+                if current_price < self.position['last_trailing_price']:
+                    new_trailing_price = current_price * (1 + self.trailing_distance_percent / 100)
+                    if new_trailing_price < self.trailing_stop_price:
+                        self.trailing_stop_price = new_trailing_price
+                        print(f"📉 {self.symbol}: Трейлинг-стоп опущен: {self.trailing_stop_price:.2f}")
+                        self._cancel_all_stops()
+                        self.exchange.create_order(
+                            symbol=self.symbol,
+                            type='stop_market',
+                            side='buy',
+                            amount=self.position['amount'],
+                            params={'stopPrice': self.trailing_stop_price, 'reduceOnly': True}
+                        )
+                        self.position['last_trailing_price'] = current_price
+
+        except Exception as e:
+            print(f"⚠️ {self.symbol}: Ошибка обновления трейлинга: {e}")
