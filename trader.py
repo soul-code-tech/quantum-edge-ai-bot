@@ -64,7 +64,7 @@ class BingXTrader:
                 'Content-Type': 'application/json'
             }
 
-            url = 'https://open-api.bingx.com/openApi/swap/v2/trade/setLeverage'  # ✅ УБРАЛ лишние пробелы в конце!
+            url = 'https://open-api.bingx.com/openApi/swap/v2/trade/leverage'  # ✅ УБРАЛ лишние пробелы в конце!
 
             payload = {**params, 'signature': signature}
 
