@@ -1,6 +1,10 @@
-# trader.py — Quantum Edge AI Bot: BingXTrader (исправленная версия)
+# trader.py — Quantum Edge AI Bot: BingXTrader (полностью рабочая версия)
 import ccxt
 import os
+import time
+import hashlib
+import hmac
+import requests
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -25,61 +29,52 @@ class BingXTrader:
         # Установка плеча при старте
         self._set_leverage(leverage)
 
-        # Хранение позиции для трейлинга
+        # Храним позицию для трейлинга
         self.position = None
         self.trailing_stop_price = None
         self.trailing_distance_percent = 1.0  # 1% от цены
 
     def _set_leverage(self, leverage):
-    """Устанавливает плечо через ручной HTTP-запрос"""
-    try:
-        # Подготовка данных
-        import time
-        import hashlib
-        import hmac
-        import requests
+        """Устанавливает плечо через ручной API-вызов к BingX"""
+        try:
+            # Подготовка данных
+            symbol_for_api = self.symbol.replace('-', '')
+            timestamp = int(time.time() * 1000)
+            api_key = os.getenv('BINGX_API_KEY')
+            secret_key = os.getenv('BINGX_SECRET_KEY')
 
-        url = 'https://open-api.bingx.com/openApi/swap/v2/trade/setLeverage'
-        
-        symbol_for_api = self.symbol.replace('-', '')
-        timestamp = int(time.time() * 1000)
-        
-        params = {
-            'symbol': symbol_for_api,
-            'leverage': str(leverage),
-            'timestamp': str(timestamp)
-        }
+            params = {
+                'symbol': symbol_for_api,
+                'leverage': str(leverage),
+                'timestamp': timestamp
+            }
 
-        # Сортируем параметры по алфавиту
-        query_string = '&'.join([f"{k}={v}" for k, v in sorted(params.items())])
-        
-        # Создаём подпись
-        secret = os.getenv('BINGX_SECRET_KEY')
-        signature = hmac.new(secret.encode(), query_string.encode(), hashlib.sha256).hexdigest()
+            # Сортируем параметры по алфавиту и собираем строку
+            query_string = '&'.join([f"{k}={v}" for k, v in sorted(params.items())])
+            
+            # Создаём подпись
+            signature = hmac.new(
+                secret_key.encode(),
+                query_string.encode(),
+                hashlib.sha256
+            ).hexdigest()
 
-        headers = {
-            'X-BX-APIKEY': os.getenv('BINGX_API_KEY'),
-            'Content-Type': 'application/json'
-        }
+            headers = {
+                'X-BX-APIKEY': api_key,
+                'Content-Type': 'application/json'
+            }
 
-        params['signature'] = signature
+            payload = {**params, 'signature': signature}
 
-        response = requests.post(url, json=params, headers=headers)
-        result = response.json()
-        
-        if result.get('code') == 0:
-            print(f"✅ {self.symbol}: Плечо установлено на {leverage}x")
-        else:
-            print(f"❌ Ошибка при установке плеча: {result.get('msg', 'unknown')}")
+            url = 'https://open-api.bingx.com/openApi/swap/v2/trade/setLeverage'
 
-    except Exception as e:
-        print(f"⚠️ Не удалось установить плечо: {e}")
+            response = requests.post(url, json=payload, headers=headers)
+            result = response.json()
 
-            # Проверяем ответ
-            if response.get('code') == 0:
+            if result.get('code') == 0:
                 print(f"✅ {self.symbol}: Плечо установлено на {leverage}x")
             else:
-                msg = response.get('msg', 'unknown')
+                msg = result.get('msg', 'unknown')
                 print(f"❌ Ошибка установки плеча: {msg}")
 
         except Exception as e:
@@ -87,10 +82,10 @@ class BingXTrader:
 
     def place_order(self, side, amount, stop_loss_percent=1.5, take_profit_percent=3.0):
         """
-        Открывает рыночную позицию + стоп-лосс + тейк-профит
+        Открывает рыночный ордер + стоп-лосс + тейк-профит
         """
         try:
-            # 🔍 Проверка статуса пары
+            # 🔍 Проверяем статус пары
             markets = self.exchange.fetch_markets()
             for m in markets:
                 if m['symbol'] == self.symbol:
@@ -114,7 +109,7 @@ class BingXTrader:
                 ticker = self.exchange.fetch_ticker(self.symbol)
                 entry_price = ticker['last']
 
-            # 📊 Рассчитываем TP/SL в процентах от цены
+            # 📊 Рассчитываем TP/SL
             if side == 'buy':
                 stop_loss_price = entry_price * (1 - stop_loss_percent / 100)
                 take_profit_price = entry_price * (1 + take_profit_percent / 100)
@@ -128,7 +123,7 @@ class BingXTrader:
             print(f"⛔ Отправка стоп-лосса (stop_market): {stop_loss_price:.2f} ({stop_loss_percent}%)")
             print(f"🎯 Отправка тейк-профита (limit): {take_profit_price:.2f} ({take_profit_percent}%)")
 
-            # ✅ Стоп-лосс: stop_market + reduceOnly
+            # ✅ Стоп-лосс
             self.exchange.create_order(
                 symbol=self.symbol,
                 type='stop_market',
@@ -140,7 +135,7 @@ class BingXTrader:
                 }
             )
 
-            # ✅ Тейк-профит: limit + reduceOnly
+            # ✅ Тейк-профит
             self.exchange.create_order(
                 symbol=self.symbol,
                 type='limit',
@@ -180,7 +175,7 @@ class BingXTrader:
             return None
 
     def update_trailing_stop(self):
-        """Обновляет трейлинг-стоп при движении цены в выгодную сторону"""
+        """Обновляет трейлинг-стоп при движении цены"""
         if not self.position:
             return
 
@@ -225,7 +220,7 @@ class BingXTrader:
             print(f"⚠️ {self.symbol}: Ошибка обновления трейлинга: {e}")
 
     def _cancel_all_stops(self):
-        """Отменяет все активные стоп-ордера перед обновлением"""
+        """Отменяет все активные stop-ордера перед обновлением"""
         try:
             orders = self.exchange.fetch_open_orders(self.symbol)
             for order in orders:
