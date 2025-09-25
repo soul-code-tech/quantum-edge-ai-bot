@@ -156,6 +156,10 @@ def start_bot_once():
 @app.route('/')
 def wake_up():
     return "✅ Quantum Edge AI Bot is LIVE on 10 cryptos!", 200
+    # ✅ ДОБАВЬ ЭТОТ КОД В main.py — ПОСЛЕ @app.route('/')
+@app.route('/health')
+def health_check():
+    return "OK", 200
 
 # ✅ ЗАПУСКАЕМ FLASK — БЕЗ if __name__ == "__main__"
 port = int(os.environ.get("PORT", 10000))
