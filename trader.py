@@ -1,4 +1,4 @@
-# trader.py — Quantum Edge AI Bot: BingXTrader (РАБОЧАЯ ВЕРСИЯ — 25.09.2025)
+# trader.py — Quantum Edge AI Bot: BingXTrader (ФИНАЛЬНАЯ РАБОЧАЯ ВЕРСИЯ)
 import ccxt
 import os
 import time
@@ -26,8 +26,8 @@ class BingXTrader:
         if use_demo:
             self.exchange.set_sandbox_mode(True)
 
-        # Устанавливаем плечо через ручной запрос
-        self._set_leverage(leverage)
+        # Устанавливаем плечо через ручной запрос — ОПЦИОНАЛЬНО (если нужно)
+        # self._set_leverage(leverage)  # ← ЗАКОММЕНТИРОВАНО — не нужно, если плечо уже установлено
 
         # Хранение позиции для трейлинга
         self.position = None
@@ -35,15 +35,14 @@ class BingXTrader:
         self.trailing_distance_percent = 1.0  # 1% от цены
 
     def _set_leverage(self, leverage):
-        """Устанавливает плечо через прямой POST-запрос к BingX (swap)"""
+        """Устанавливает плечо через прямой POST-запрос к BingX (swap) — для полной автоматизации"""
         try:
             timestamp = int(time.time() * 1000)
             symbol_for_api = self.symbol.replace('-', '')  # BTCUSDT
             api_key = os.getenv('BINGX_API_KEY')
             secret_key = os.getenv('BINGX_SECRET_KEY')
 
-            # ✅ ВСЕ ПАРАМЕТРЫ ДЛЯ ПОДПИСИ — КАК СТРОКИ (ВАЖНО!)
-            # Строка для подписи: параметры в порядке: symbol, leverage, side, timestamp
+            # ✅ ВСЕ ПАРАМЕТРЫ ДЛЯ ПОДПИСИ — КАК СТРОКИ
             query_string = f"symbol={symbol_for_api}&leverage={str(leverage)}&side=BOTH&timestamp={timestamp}"
 
             # ✅ ГЕНЕРИРУЕМ ПОДПИСЬ
@@ -53,11 +52,11 @@ class BingXTrader:
                 hashlib.sha256
             ).hexdigest()
 
-            # ✅ ТЕЛО ЗАПРОСА — ТОЧНО ТАКИЕ ЖЕ ПАРАМЕТРЫ, КАК В query_string — ВСЁ КАК СТРОКИ!
+            # ✅ ТЕЛО ЗАПРОСА — ТОЧНО ТАКИЕ ЖЕ ПАРАМЕТРЫ, КАК В query_string
             payload = {
                 "symbol": symbol_for_api,
-                "leverage": str(leverage),   # ← ✅ ОБЯЗАТЕЛЬНО: СТРОКА! (не int!)
-                "side": "BOTH",              # ← ✅ ОБЯЗАТЕЛЬНО!
+                "leverage": str(leverage),   # ← СТРОКА!
+                "side": "BOTH",              # ← ОБЯЗАТЕЛЬНО!
                 "timestamp": timestamp,
                 "signature": signature
             }
@@ -67,10 +66,9 @@ class BingXTrader:
                 'Content-Type': 'application/json'
             }
 
-            # ✅ ПРАВИЛЬНЫЙ URL — ИЗ ДОКУМЕНТАЦИИ BingX Swap
+            # ✅ ПРАВИЛЬНЫЙ URL — ИЗ ДОКУМЕНТАЦИИ
             url = 'https://open-api.bingx.com/openApi/swap/v2/trade/leverage'
 
-            # ✅ ОТПРАВЛЯЕМ КАК JSON — ТАК И ТРЕБУЕТ API
             response = requests.post(url, json=payload, headers=headers)
             result = response.json()
 
@@ -84,6 +82,7 @@ class BingXTrader:
             print(f"⚠️ Не удалось установить плечо для {self.symbol}: {e}")
 
     def place_order(self, side, amount, stop_loss_percent=1.5, take_profit_percent=3.0):
+        """Отправляет рыночный ордер + стоп-лосс + тейк-профит"""
         try:
             # Проверка статуса пары
             markets = self.exchange.fetch_markets()
@@ -104,10 +103,11 @@ class BingXTrader:
             print(f"✅ Рыночный ордер исполнен: {order_id}")
 
             # Получаем цену входа
-            entry_price = market_order.get('price', None)
-            if not entry_price:
-                ticker = self.exchange.fetch_ticker(self.symbol)
-                entry_price = ticker['last']
+            def fetch_ticker_safe():
+                return self.exchange.fetch_ticker(self.symbol)
+            
+            ticker = fetch_with_retry(fetch_ticker_safe)
+            entry_price = ticker['last']
 
             # Рассчитываем TP/SL
             if side == 'buy':
@@ -176,21 +176,50 @@ class BingXTrader:
         if not self.position:
             return
 
-        current_price = self.exchange.fetch_ticker(self.symbol)['last']
+        def fetch_ticker_safe():
+            return self.exchange.fetch_ticker(self.symbol)
+        
+        current_price = fetch_with_retry(fetch_ticker_safe)['last']
         side = self.position['side']
         new_trailing_price = None
 
         if side == 'buy':
-            # Для лонга: трейлинг-стоп должен расти
             new_trailing_price = current_price * (1 - self.trailing_distance_percent / 100)
             if new_trailing_price > self.trailing_stop_price:
                 self.trailing_stop_price = new_trailing_price
                 print(f"📈 {self.symbol}: Трейлинг-стоп обновлён до {self.trailing_stop_price:.2f} (был {self.position['last_trailing_price']:.2f})")
         else:
-            # Для шорта: трейлинг-стоп должен падать
             new_trailing_price = current_price * (1 + self.trailing_distance_percent / 100)
             if new_trailing_price < self.trailing_stop_price:
                 self.trailing_stop_price = new_trailing_price
                 print(f"📉 {self.symbol}: Трейлинг-стоп обновлён до {self.trailing_stop_price:.2f} (был {self.position['last_trailing_price']:.2f})")
 
         self.position['last_trailing_price'] = current_price
+
+
+# Добавляем функцию fetch_with_retry в этот же файл — чтобы не импортировать из data_fetcher
+def fetch_with_retry(func, max_retries=3, delay=2, backoff=1.5):
+    """
+    Умный retry для API-запросов BingX — с backoff и альтернативными доменами
+    """
+    base_urls = [
+        'https://open-api.bingx.com',
+        'https://open-api.bingx.io'
+    ]
+    
+    for attempt in range(max_retries):
+        for base_url in base_urls:
+            try:
+                exchange = ccxt.bingx({
+                    'options': {'defaultType': 'swap', 'baseUrl': base_url},
+                    'enableRateLimit': True,
+                })
+                result = func(exchange)
+                return result
+            except Exception as e:
+                if attempt == max_retries - 1 and base_url == base_urls[-1]:
+                    raise Exception(f"❌ Все домены и попытки исчерпаны: {e}")
+                wait_time = delay * (backoff ** attempt) + random.uniform(0, 1)
+                print(f"⚠️ Ошибка при обращении к {base_url}: {e}. Повтор через {wait_time:.1f} сек. (попытка {attempt + 1}/{max_retries})")
+                time.sleep(wait_time)
+                break  # Переход к следующему домену
