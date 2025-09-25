@@ -1,7 +1,6 @@
-# trader.py — ФИНАЛЬНАЯ ВЕРСИЯ (исправленный метод установки плеча)
+# trader.py — ИСПРАВЛЕННАЯ ВЕРСИЯ — ОТСТУПЫ УСТАНОВЛЕНЫ ПРАВИЛЬНО
 import ccxt
 import os
-import time
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -20,30 +19,18 @@ class BingXTrader:
         if use_demo:
             self.exchange.set_sandbox_mode(True)
 
-       # ✅ ПРАВИЛЬНО — camelCase, без подчёркиваний
-       self.exchange.fapiPrivatePostLeverage({
-       'symbol': symbol_for_api,
-       'leverage': leverage
+        # ✅ ПРАВИЛЬНЫЙ ОТСТУП — ВСЕ СТРОКИ ВНУТРИ __init__ ОТСТУПЛЕНЫ НА 8 ПРОБЕЛОВ
+        symbol_for_api = self.symbol.replace('-', '')
+        self.exchange.fapiPrivatePostLeverage({
+            'symbol': symbol_for_api,
+            'leverage': leverage
         })
-        
+        print(f"🔧 {self.symbol}: Плечо установлено на {leverage}x")
+
         # 📊 Храним текущую позицию и трейлинг
         self.position = None
         self.trailing_stop_price = None
         self.trailing_distance_percent = 1.0  # 1% от цены
-
-    def _set_leverage(self, leverage):
-        """Устанавливает плечо для пары (BingX требует camelCase!)"""
-        try:
-            # BingX требует символ без "-"
-            symbol_for_api = self.symbol.replace('-', '')
-            # ✅ ИСПРАВЛЕНО: fapiPrivatePostLeverage — именно так!
-            self.exchange.fapiPrivatePostLeverage({
-                'symbol': symbol_for_api,
-                'leverage': leverage
-            })
-            print(f"🔧 {self.symbol}: Плечо установлено на {leverage}x")
-        except Exception as e:
-            print(f"⚠️ Не удалось установить плечо для {self.symbol}: {e}")
 
     def place_order(self, side, amount, stop_loss_percent=1.5, take_profit_percent=3.0):
         try:
