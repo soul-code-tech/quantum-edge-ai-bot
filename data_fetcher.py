@@ -5,34 +5,37 @@ import time
 import random
 
 def fetch_with_retry(func, max_retries=3, delay=2, backoff=1.5):
-    for attempt in range(max_retries):
-        try:
-            return func()
-        except Exception as e:
-            if attempt == max_retries - 1:
-                raise e
-            wait_time = delay * (backoff ** attempt) + random.uniform(0, 1)
-            print(f"⚠️ Ошибка при вызове {func.__name__}: {e}. Повтор через {wait_time:.1f} сек. (попытка {attempt + 1}/{max_retries})")
-            time.sleep(wait_time)
-
-def get_bars(symbol='BTC-USDT', timeframe='1h', limit=100):
+    """
+    Умный retry для API-запросов BingX — с backoff и альтернативными доменами
+    """
     base_urls = [
         'https://open-api.bingx.com',
-        'https://open-api.bingx.io'
+        'https://open-api.bingx.io'  # Альтернатива — часто работает при блокировке основного
     ]
     
-    for base_url in base_urls:
-        try:
-            exchange = ccxt.bingx({
-                'options': {'defaultType': 'swap', 'baseUrl': base_url},
-                'enableRateLimit': True,
-            })
-            ohlcv = fetch_with_retry(lambda: exchange.fetch_ohlcv(symbol, timeframe, limit=limit))
-            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-            return df
-        except Exception as e:
-            print(f"⚠️ Не удалось подключиться к {base_url}: {e}")
-            continue
+    for attempt in range(max_retries):
+        for base_url in base_urls:
+            try:
+                exchange = ccxt.bingx({
+                    'options': {'defaultType': 'swap', 'baseUrl': base_url},
+                    'enableRateLimit': True,
+                })
+                result = func(exchange)
+                return result
+            except Exception as e:
+                if attempt == max_retries - 1 and base_url == base_urls[-1]:
+                    raise Exception(f"❌ Все домены и попытки исчерпаны: {e}")
+                wait_time = delay * (backoff ** attempt) + random.uniform(0, 1)
+                print(f"⚠️ Ошибка при обращении к {base_url}: {e}. Повтор через {wait_time:.1f} сек. (попытка {attempt + 1}/{max_retries})")
+                time.sleep(wait_time)
+                break  # Переход к следующему домену
 
-    raise Exception("❌ Все домены BingX недоступны")
+def get_bars(symbol='BTC-USDT', timeframe='1h', limit=100):
+    """Получает OHLCV-данные с биржи с защитой от сбоев"""
+    def fetch_ohlcv(exchange):
+        return exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
+    
+    ohlcv = fetch_with_retry(fetch_ohlcv)
+    df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+    return df
