@@ -1,5 +1,8 @@
+# main.py — Quantum Edge AI Bot v3.0
+# Вариант B: НЕ обучаем LSTM каждый цикл
+# Вариант C: Обучение раз в час, с разбегом по парам
 from flask import Flask
-import threading  # ✅ ЭТО НУЖНО! БЕЗ ЭТОГО — ПАДЕНИЕ!
+import threading
 import time
 import os
 from data_fetcher import get_bars
@@ -10,7 +13,7 @@ from lstm_model import LSTMPredictor
 app = Flask(__name__)
 _bot_started = False
 
-# 📊 СПИСОК ПАР
+# Только 7 пар — меньше нагрузки
 SYMBOLS = [
     'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT',
     'DOGE-USDT', 'TON-USDT', 'PENGU-USDT'
@@ -27,6 +30,7 @@ LOOKBACK = 200
 SIGNAL_COOLDOWN = 3600
 UPDATE_TRAILING_INTERVAL = 300
 TEST_INTERVAL = 300
+LSTM_TRAIN_INTERVAL = 3600  # Обучение LSTM раз в час
 
 # Инициализация
 lstm_models = {}
@@ -36,7 +40,7 @@ for symbol in SYMBOLS:
     lstm_models[symbol] = LSTMPredictor(lookback=60)
     traders[symbol] = BingXTrader(symbol=symbol, use_demo=True, leverage=10)
 
-print("✅ [СТАРТ] Quantum Edge AI Bot запущен на 10 криптопарах")
+print("✅ [СТАРТ] Quantum Edge AI Bot запущен на 7 криптопарах")
 print(f"📊 ПАРЫ: {', '.join(SYMBOLS)}")
 print(f"🧠 LSTM: порог уверенности {LSTM_CONFIDENCE * 100}%")
 print(f"💸 Риск: {RISK_PERCENT}% от депозита на сделку")
@@ -44,21 +48,39 @@ print(f"⛔ Стоп-лосс: {STOP_LOSS_PCT}% | 🎯 Тейк-профит: {T
 print(f"📈 Трейлинг-стоп: {TRAILING_PCT}% от цены")
 print(f"⏳ Кулдаун: {SIGNAL_COOLDOWN} сек. на пару")
 
-# 🚦 Глобальные переменные
+# Глобальные переменные
 last_signal_time = {}
 last_trailing_update = {}
 last_test_order = 0
+last_lstm_train_time = 0
 total_trades = 0
 
 def run_strategy():
-    global last_signal_time, last_trailing_update, last_test_order, total_trades
-
+    global last_signal_time, last_trailing_update, last_test_order, total_trades, last_lstm_train_time
     while True:
         try:
             current_time = time.time()
 
-            for symbol in SYMBOLS:
+            # ✅ Обучаем LSTM только раз в час
+            if current_time - last_lstm_train_time > LSTM_TRAIN_INTERVAL:
+                print("🔄 Начинаем переобучение LSTM моделей...")
+                for symbol in SYMBOLS:
+                    df = get_bars(symbol, TIMEFRAME, LOOKBACK)
+                    if df is not None and len(df) >= 100:
+                        df = calculate_strategy_signals(df, 60)
+                        try:
+                            lstm_models[symbol].train(df)
+                            print(f"✅ {symbol}: LSTM модель переобучена")
+                        except Exception as e:
+                            print(f"⚠️ {symbol}: Ошибка при обучении LSTM — {e}")
+                last_lstm_train_time = current_time
+
+            # ✅ Анализируем каждую пару с задержкой 10 сек между ними
+            for i, symbol in enumerate(SYMBOLS):
                 print(f"\n--- [{time.strftime('%H:%M:%S')}] {symbol} ---")
+                
+                # ⏳ Разбивка по времени — не грузим API одновременно
+                time.sleep(10)  # 10 сек между парами
 
                 df = get_bars(symbol, TIMEFRAME, LOOKBACK)
                 if df is None or len(df) < 100:
@@ -77,11 +99,11 @@ def run_strategy():
                     print(f"⏳ Кулдаун: {symbol} — пропускаем")
                     continue
 
+                # ✅ Прогноз без переобучения
                 lstm_prob = lstm_models[symbol].predict_next(df)
                 lstm_confident = lstm_prob > LSTM_CONFIDENCE
                 print(f"🧠 LSTM: {symbol} — {lstm_prob:.2%} → {'✅ ДОПУСТИМ' if lstm_confident else '❌ ОТКЛОНЕНО'}")
 
-                # ✅ УСЛОВИЕ ВХОДА: СИЛЬНЫЙ СИГНАЛ + LSTM
                 strong_strategy = (buy_signal and long_score >= 5) or (sell_signal and short_score >= 5)
                 if strong_strategy and lstm_confident:
                     side = 'buy' if buy_signal else 'sell'
@@ -141,7 +163,6 @@ def run_strategy():
             print("⏳ Перезапуск цикла через 60 секунд...")
             time.sleep(60)
 
-# ✅ ЗАПУСК БОТА ПРИ ПЕРВОМ ЗАПРОСЕ
 @app.before_request
 def start_bot_once():
     global _bot_started
@@ -151,16 +172,15 @@ def start_bot_once():
         print("🚀 [СИСТЕМА] Фоновый торговый бот успешно запущен!")
         _bot_started = True
 
-# ✅ ОБЯЗАТЕЛЬНЫЙ ЭНДПОИНТ — ПОРТ ДОЛЖЕН БЫТЬ ОТКРЫТ!
 @app.route('/')
 def wake_up():
-    return "✅ Quantum Edge AI Bot is LIVE on 10 cryptos!", 200
-    # ✅ ДОБАВЬ ЭТОТ КОД В main.py — ПОСЛЕ @app.route('/')
+    return "✅ Quantum Edge AI Bot is LIVE on 7 cryptos!", 200
+
 @app.route('/health')
 def health_check():
     return "OK", 200
 
-# ✅ ЗАПУСКАЕМ FLASK — БЕЗ if __name__ == "__main__"
-port = int(os.environ.get("PORT", 10000))
-print(f"🌐 Flask сервер запущен на порту {port}")
-app.run(host='0.0.0.0', port=port)
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    print(f"🌐 Flask сервер запущен на порту {port}")
+    app.run(host='0.0.0.0', port=port)
