@@ -31,16 +31,49 @@ class BingXTrader:
         self.trailing_distance_percent = 1.0  # 1% от цены
 
     def _set_leverage(self, leverage):
-        """Устанавес плечо через прямой API-вызов"""
-        try:
-            # Формат символа: BTCUSDT (без дефисов)
-            symbol_for_api = self.symbol.replace('-', '')
-            
-            # ✅ Правильный вызов через private_post_ + snake_case
-            response = self.exchange.private_post_linear_swap_api_v1_trading_set_leverage({
-                'symbol': symbol_for_api,
-                'leverage': str(leverage)
-            })
+    """Устанавливает плечо через ручной HTTP-запрос"""
+    try:
+        # Подготовка данных
+        import time
+        import hashlib
+        import hmac
+        import requests
+
+        url = 'https://open-api.bingx.com/openApi/swap/v2/trade/setLeverage'
+        
+        symbol_for_api = self.symbol.replace('-', '')
+        timestamp = int(time.time() * 1000)
+        
+        params = {
+            'symbol': symbol_for_api,
+            'leverage': str(leverage),
+            'timestamp': str(timestamp)
+        }
+
+        # Сортируем параметры по алфавиту
+        query_string = '&'.join([f"{k}={v}" for k, v in sorted(params.items())])
+        
+        # Создаём подпись
+        secret = os.getenv('BINGX_SECRET_KEY')
+        signature = hmac.new(secret.encode(), query_string.encode(), hashlib.sha256).hexdigest()
+
+        headers = {
+            'X-BX-APIKEY': os.getenv('BINGX_API_KEY'),
+            'Content-Type': 'application/json'
+        }
+
+        params['signature'] = signature
+
+        response = requests.post(url, json=params, headers=headers)
+        result = response.json()
+        
+        if result.get('code') == 0:
+            print(f"✅ {self.symbol}: Плечо установлено на {leverage}x")
+        else:
+            print(f"❌ Ошибка при установке плеча: {result.get('msg', 'unknown')}")
+
+    except Exception as e:
+        print(f"⚠️ Не удалось установить плечо: {e}")
 
             # Проверяем ответ
             if response.get('code') == 0:
