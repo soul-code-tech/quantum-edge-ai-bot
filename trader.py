@@ -7,30 +7,30 @@ load_dotenv()
 
 class BingXTrader:
     def __init__(self, symbol='BTC-USDT', use_demo=False, leverage=10):
-        self.symbol = symbol
-        self.use_demo = use_demo
-        self.leverage = leverage
-        self.exchange = ccxt.bingx({
-            'apiKey': os.getenv('BINGX_API_KEY'),
-            'secret': os.getenv('BINGX_SECRET_KEY'),
-            'options': {'defaultType': 'swap'},
-            'enableRateLimit': True,
-        })
-        if use_demo:
-            self.exchange.set_sandbox_mode(True)
+    self.symbol = symbol
+    self.use_demo = use_demo
+    self.leverage = leverage
+    self.exchange = ccxt.bingx({
+        'apiKey': os.getenv('BINGX_API_KEY'),
+        'secret': os.getenv('BINGX_SECRET_KEY'),
+        'options': {'defaultType': 'swap'},
+        'enableRateLimit': True,
+    })
+    if use_demo:
+        self.exchange.set_sandbox_mode(True)
 
-        # ✅ ПРАВИЛЬНЫЙ ОТСТУП — ВСЕ СТРОКИ ВНУТРИ __init__ ОТСТУПЛЕНЫ НА 8 ПРОБЕЛОВ
-        symbol_for_api = self.symbol.replace('-', '')
-        self.exchange.fapiPrivatePostLeverage({
-            'symbol': symbol_for_api,
-            'leverage': leverage
-        })
-        print(f"🔧 {self.symbol}: Плечо установлено на {leverage}x")
+    # ✅ ПРАВИЛЬНЫЙ МЕТОД — С ПОДЧЁРКИВАНИЯМИ
+    symbol_for_api = self.symbol.replace('-', '')
+    self.exchange.fapiPrivate_post_leverage({
+        'symbol': symbol_for_api,
+        'leverage': leverage
+    })
+    print(f"🔧 {self.symbol}: Плечо установлено на {leverage}x")
 
-        # 📊 Храним текущую позицию и трейлинг
-        self.position = None
-        self.trailing_stop_price = None
-        self.trailing_distance_percent = 1.0  # 1% от цены
+    # 📊 Храним текущую позицию и трейлинг
+    self.position = None
+    self.trailing_stop_price = None
+    self.trailing_distance_percent = 1.0  # 1% от цены
 
     def place_order(self, side, amount, stop_loss_percent=1.5, take_profit_percent=3.0):
         try:
