@@ -81,7 +81,7 @@ class BingXTrader:
             print(f"⚠️ Не удалось установить плечо для {self.symbol}: {e}")
 
     def place_order(self, side, amount, stop_loss_percent=1.5, take_profit_percent=3.0):
-    try:
+        try:
         # Проверка статуса пары
         markets = self.exchange.fetch_markets()
         for m in markets:
