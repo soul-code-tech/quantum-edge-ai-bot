@@ -1,4 +1,4 @@
-# trader.py — Quantum Edge AI Bot: BingXTrader (рабочая версия)
+# trader.py — Quantum Edge AI Bot: BingXTrader (РАБОЧАЯ ВЕРСИЯ — 25.09.2025)
 import ccxt
 import os
 import time
@@ -42,7 +42,8 @@ class BingXTrader:
             api_key = os.getenv('BINGX_API_KEY')
             secret_key = os.getenv('BINGX_SECRET_KEY')
 
-            # ✅ ВСЕ ПАРАМЕТРЫ ДЛЯ ПОДПИСИ — КАК СТРОКИ!
+            # ✅ ВСЕ ПАРАМЕТРЫ ДЛЯ ПОДПИСИ — КАК СТРОКИ (ВАЖНО!)
+            # Строка для подписи: параметры в порядке: symbol, leverage, side, timestamp
             query_string = f"symbol={symbol_for_api}&leverage={str(leverage)}&side=BOTH&timestamp={timestamp}"
 
             # ✅ ГЕНЕРИРУЕМ ПОДПИСЬ
@@ -52,12 +53,11 @@ class BingXTrader:
                 hashlib.sha256
             ).hexdigest()
 
-            # ✅ ТЕЛО ЗАПРОСА — ПАРАМЕТРЫ ДОЛЖНЫ БЫТЬ ТАКИМИ ЖЕ, КАК В query_string
-            # ПОЭТОМУ leverage — СТРОКА!
+            # ✅ ТЕЛО ЗАПРОСА — ТОЧНО ТАКИЕ ЖЕ ПАРАМЕТРЫ, КАК В query_string — ВСЁ КАК СТРОКИ!
             payload = {
                 "symbol": symbol_for_api,
-                "leverage": str(leverage),   # ← ✅ ОБЯЗАТЕЛЬНО: СТРОКА!
-                "side": "BOTH",
+                "leverage": str(leverage),   # ← ✅ ОБЯЗАТЕЛЬНО: СТРОКА! (не int!)
+                "side": "BOTH",              # ← ✅ ОБЯЗАТЕЛЬНО!
                 "timestamp": timestamp,
                 "signature": signature
             }
@@ -67,8 +67,10 @@ class BingXTrader:
                 'Content-Type': 'application/json'
             }
 
+            # ✅ ПРАВИЛЬНЫЙ URL — ИЗ ДОКУМЕНТАЦИИ BingX Swap
             url = 'https://open-api.bingx.com/openApi/swap/v2/trade/leverage'
 
+            # ✅ ОТПРАВЛЯЕМ КАК JSON — ТАК И ТРЕБУЕТ API
             response = requests.post(url, json=payload, headers=headers)
             result = response.json()
 
