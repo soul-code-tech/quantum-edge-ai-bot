@@ -1,6 +1,4 @@
-# main.py — Quantum Edge AI Bot v3.1 (Render-Optimized)
-# Вариант B: НЕ обучаем LSTM каждый цикл
-# Вариант C: Обучение раз в час, с разбегом по парам → УЛУЧШЕНО: раз в 30 минут, по одной паре
+# main.py — Quantum Edge AI Bot v3.2 (Render-Optimized — ФИНАЛЬНАЯ ВЕРСИЯ)
 from flask import Flask
 import threading
 import time
@@ -13,10 +11,10 @@ from lstm_model import LSTMPredictor
 app = Flask(__name__)
 _bot_started = False
 
-# Только 7 пар — меньше нагрузки
+# 9 пар — меньше нагрузки, больше диверсификации
 SYMBOLS = [
     'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT',
-    'DOGE-USDT', 'AVAX-USDT', 'PENGU-USDT', 'SHIB-USDT', 'LINK-USDT'
+    'DOGE-USDT', 'AVAX-USDT', 'PENGU-USDT', 'LINK-USDT'
 ]
 
 # Параметры
@@ -29,8 +27,8 @@ TIMEFRAME = '1h'
 LOOKBACK = 200
 SIGNAL_COOLDOWN = 3600
 UPDATE_TRAILING_INTERVAL = 300
-TEST_INTERVAL = 86400  # ✅ 24 часа в секундах (было 300 — исправлено!)
-LSTM_TRAIN_INTERVAL = 1800  # ✅ Обучение LSTM — каждые 30 минут (было 3600)
+TEST_INTERVAL = 86400  # ✅ 24 часа в секундах
+LSTM_TRAIN_INTERVAL = 1800  # ✅ Обучение каждые 30 минут
 
 # Инициализация
 lstm_models = {}
@@ -40,7 +38,7 @@ for symbol in SYMBOLS:
     lstm_models[symbol] = LSTMPredictor(lookback=60)
     traders[symbol] = BingXTrader(symbol=symbol, use_demo=True, leverage=10)
 
-print("✅ [СТАРТ] Quantum Edge AI Bot запущен на 7 криптопарах")
+print("✅ [СТАРТ] Quantum Edge AI Bot запущен на 9 криптопарах")
 print(f"📊 ПАРЫ: {', '.join(SYMBOLS)}")
 print(f"🧠 LSTM: порог уверенности {LSTM_CONFIDENCE * 100}%")
 print(f"💸 Риск: {RISK_PERCENT}% от депозита на сделку")
@@ -55,7 +53,7 @@ last_signal_time = {}
 last_trailing_update = {}
 last_test_order = 0
 last_lstm_train_time = 0
-last_lstm_next_symbol_index = 0  # ✅ Новый индекс для поочерёдного обучения
+last_lstm_next_symbol_index = 0
 total_trades = 0
 
 def run_strategy():
@@ -64,9 +62,9 @@ def run_strategy():
         try:
             current_time = time.time()
 
-            # ✅ 1. Обучение LSTM — РАСПРЕДЕЛЕНО ПО ВРЕМЕНИ: каждые 30 минут — одна пара
+            # ✅ 1. Обучение LSTM — каждые 30 минут, по одной паре
             if current_time - last_lstm_train_time >= LSTM_TRAIN_INTERVAL:
-                print(f"\n🔄 [LSTM] Обучение: {SYMBOLS[last_lstm_next_symbol_index]} (шаг {last_lstm_next_symbol_index + 1}/7)")
+                print(f"\n🔄 [LSTM] Обучение: {SYMBOLS[last_lstm_next_symbol_index]} (шаг {last_lstm_next_symbol_index + 1}/{len(SYMBOLS)})")
                 symbol = SYMBOLS[last_lstm_next_symbol_index]
                 df = get_bars(symbol, TIMEFRAME, LOOKBACK)
                 if df is not None and len(df) >= 100:
@@ -79,16 +77,14 @@ def run_strategy():
                 else:
                     print(f"⚠️ {symbol}: Недостаточно данных для обучения")
 
-                # Переходим к следующей паре (циклически)
                 last_lstm_next_symbol_index = (last_lstm_next_symbol_index + 1) % len(SYMBOLS)
-                last_lstm_train_time = current_time  # Сбрасываем таймер на 30 минут
+                last_lstm_train_time = current_time
 
             # ✅ 2. Анализ каждой пары с задержкой 10 сек
             for i, symbol in enumerate(SYMBOLS):
                 print(f"\n--- [{time.strftime('%H:%M:%S')}] {symbol} ---")
                 
-                # ⏳ Разбивка по времени — не грузим API одновременно
-                time.sleep(10)  # 10 сек между парами — безопасно для Render
+                time.sleep(10)  # Безопасно для Render
 
                 df = get_bars(symbol, TIMEFRAME, LOOKBACK)
                 if df is None or len(df) < 100:
@@ -151,15 +147,15 @@ def run_strategy():
                     traders[symbol].update_trailing_stop()
                 last_trailing_update['global'] = current_time
 
-            # ✅ 4. Тестовый ордер — 1 раз в 24 часа
+            # ✅ 4. Тестовый ордер — 1 раз в 24 часа — ТОЛЬКО РЫНОЧНЫЙ, БЕЗ TP/SL
             if current_time - last_test_order > TEST_INTERVAL:
                 test_symbol = SYMBOLS[0]
-                print(f"\n🎯 [ТЕСТ] ПРОВЕРКА СВЯЗИ: Принудительный BUY на {test_symbol} (раз в 24 часа)")
+                print(f"\n🎯 [ТЕСТ] ПРОВЕРКА СВЯЗИ: Принудительный MARKET BUY на {test_symbol} (раз в 24 часа)")
                 traders[test_symbol].place_order(
                     side='buy',
                     amount=0.001,
-                    stop_loss_percent=STOP_LOSS_PCT,
-                    take_profit_percent=TAKE_PROFIT_PCT
+                    stop_loss_percent=0,   # ← НЕТ СТОП-ЛОССА
+                    take_profit_percent=0  # ← НЕТ ТЕЙК-ПРОФИТА
                 )
                 last_test_order = current_time
 
@@ -182,7 +178,7 @@ def start_bot_once():
 
 @app.route('/')
 def wake_up():
-    return "✅ Quantum Edge AI Bot is LIVE on 7 cryptos!", 200
+    return "✅ Quantum Edge AI Bot is LIVE on 9 cryptos!", 200
 
 @app.route('/health')
 def health_check():
