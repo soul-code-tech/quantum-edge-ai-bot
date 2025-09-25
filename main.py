@@ -1,6 +1,6 @@
-# main.py — Quantum Edge AI Bot v3.0
+# main.py — Quantum Edge AI Bot v3.1 (Render-Optimized)
 # Вариант B: НЕ обучаем LSTM каждый цикл
-# Вариант C: Обучение раз в час, с разбегом по парам
+# Вариант C: Обучение раз в час, с разбегом по парам → УЛУЧШЕНО: раз в 30 минут, по одной паре
 from flask import Flask
 import threading
 import time
@@ -29,8 +29,8 @@ TIMEFRAME = '1h'
 LOOKBACK = 200
 SIGNAL_COOLDOWN = 3600
 UPDATE_TRAILING_INTERVAL = 300
-TEST_INTERVAL = 300
-LSTM_TRAIN_INTERVAL = 3600  # Обучение LSTM раз в час
+TEST_INTERVAL = 86400  # ✅ 24 часа в секундах (было 300 — исправлено!)
+LSTM_TRAIN_INTERVAL = 1800  # ✅ Обучение LSTM — каждые 30 минут (было 3600)
 
 # Инициализация
 lstm_models = {}
@@ -47,40 +47,48 @@ print(f"💸 Риск: {RISK_PERCENT}% от депозита на сделку")
 print(f"⛔ Стоп-лосс: {STOP_LOSS_PCT}% | 🎯 Тейк-профит: {TAKE_PROFIT_PCT}%")
 print(f"📈 Трейлинг-стоп: {TRAILING_PCT}% от цены")
 print(f"⏳ Кулдаун: {SIGNAL_COOLDOWN} сек. на пару")
+print(f"🔄 LSTM обучение: каждые {LSTM_TRAIN_INTERVAL//60} минут (по одной паре)")
+print(f"🎯 Тестовый ордер: раз в {TEST_INTERVAL//3600} часов")
 
 # Глобальные переменные
 last_signal_time = {}
 last_trailing_update = {}
 last_test_order = 0
 last_lstm_train_time = 0
+last_lstm_next_symbol_index = 0  # ✅ Новый индекс для поочерёдного обучения
 total_trades = 0
 
 def run_strategy():
-    global last_signal_time, last_trailing_update, last_test_order, total_trades, last_lstm_train_time
+    global last_signal_time, last_trailing_update, last_test_order, total_trades, last_lstm_train_time, last_lstm_next_symbol_index
     while True:
         try:
             current_time = time.time()
 
-            # ✅ Обучаем LSTM только раз в час
-            if current_time - last_lstm_train_time > LSTM_TRAIN_INTERVAL:
-                print("🔄 Начинаем переобучение LSTM моделей...")
-                for symbol in SYMBOLS:
-                    df = get_bars(symbol, TIMEFRAME, LOOKBACK)
-                    if df is not None and len(df) >= 100:
-                        df = calculate_strategy_signals(df, 60)
-                        try:
-                            lstm_models[symbol].train(df)
-                            print(f"✅ {symbol}: LSTM модель переобучена")
-                        except Exception as e:
-                            print(f"⚠️ {symbol}: Ошибка при обучении LSTM — {e}")
-                last_lstm_train_time = current_time
+            # ✅ 1. Обучение LSTM — РАСПРЕДЕЛЕНО ПО ВРЕМЕНИ: каждые 30 минут — одна пара
+            if current_time - last_lstm_train_time >= LSTM_TRAIN_INTERVAL:
+                print(f"\n🔄 [LSTM] Обучение: {SYMBOLS[last_lstm_next_symbol_index]} (шаг {last_lstm_next_symbol_index + 1}/7)")
+                symbol = SYMBOLS[last_lstm_next_symbol_index]
+                df = get_bars(symbol, TIMEFRAME, LOOKBACK)
+                if df is not None and len(df) >= 100:
+                    df = calculate_strategy_signals(df, 60)
+                    try:
+                        lstm_models[symbol].train(df)
+                        print(f"✅ {symbol}: LSTM переобучена!")
+                    except Exception as e:
+                        print(f"⚠️ {symbol}: Ошибка обучения LSTM — {e}")
+                else:
+                    print(f"⚠️ {symbol}: Недостаточно данных для обучения")
 
-            # ✅ Анализируем каждую пару с задержкой 10 сек между ними
+                # Переходим к следующей паре (циклически)
+                last_lstm_next_symbol_index = (last_lstm_next_symbol_index + 1) % len(SYMBOLS)
+                last_lstm_train_time = current_time  # Сбрасываем таймер на 30 минут
+
+            # ✅ 2. Анализ каждой пары с задержкой 10 сек
             for i, symbol in enumerate(SYMBOLS):
                 print(f"\n--- [{time.strftime('%H:%M:%S')}] {symbol} ---")
                 
                 # ⏳ Разбивка по времени — не грузим API одновременно
-                time.sleep(10)  # 10 сек между парами
+                time.sleep(10)  # 10 сек между парами — безопасно для Render
 
                 df = get_bars(symbol, TIMEFRAME, LOOKBACK)
                 if df is None or len(df) < 100:
@@ -136,17 +144,17 @@ def run_strategy():
                     if buy_signal or sell_signal:
                         print(f"⚠️ {symbol}: Сигнал есть, но не достаточно сильный (score={long_score if buy_signal else short_score}) или LSTM не уверен ({lstm_prob:.2%}) — пропускаем.")
 
-            # ✅ Обновление трейлинга
+            # ✅ 3. Обновление трейлинг-стопов — каждые 5 минут
             if current_time - last_trailing_update.get('global', 0) > UPDATE_TRAILING_INTERVAL:
                 print("\n🔄 Обновление трейлинг-стопов для всех пар...")
                 for symbol in SYMBOLS:
                     traders[symbol].update_trailing_stop()
                 last_trailing_update['global'] = current_time
 
-            # ✅ Тестовый ордер
+            # ✅ 4. Тестовый ордер — 1 раз в 24 часа
             if current_time - last_test_order > TEST_INTERVAL:
                 test_symbol = SYMBOLS[0]
-                print(f"\n🎯 [ТЕСТ] Принудительный BUY на {test_symbol} для проверки связи...")
+                print(f"\n🎯 [ТЕСТ] ПРОВЕРКА СВЯЗИ: Принудительный BUY на {test_symbol} (раз в 24 часа)")
                 traders[test_symbol].place_order(
                     side='buy',
                     amount=0.001,
