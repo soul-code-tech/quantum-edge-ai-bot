@@ -16,7 +16,7 @@ _bot_started = False
 # Только 7 пар — меньше нагрузки
 SYMBOLS = [
     'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT',
-    'DOGE-USDT', 'TON-USDT', 'PENGU-USDT'
+    'DOGE-USDT', 'AVAX-USDT', 'PENGU-USDT', 'SHIB-USDT', 'LINK-USDT'
 ]
 
 # Параметры
