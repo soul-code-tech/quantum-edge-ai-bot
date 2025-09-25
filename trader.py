@@ -64,7 +64,7 @@ class BingXTrader:
                 'Content-Type': 'application/json'
             }
 
-            url = 'https://open-api.bingx.com/openApi/swap/v2/trade/setLeverage'
+            url = 'https://open-api.bingx.com/openApi/swap/v2/trade/setLeverage'  # ✅ УБРАЛ лишние пробелы в конце!
 
             payload = {**params, 'signature': signature}
 
@@ -82,88 +82,112 @@ class BingXTrader:
 
     def place_order(self, side, amount, stop_loss_percent=1.5, take_profit_percent=3.0):
         try:
-        # Проверка статуса пары
-        markets = self.exchange.fetch_markets()
-        for m in markets:
-            if m['symbol'] == self.symbol:
-                if m['info'].get('status') != 'TRADING':
-                    print(f"🚫 {self.symbol} — торговля заблокирована. Пропускаем.")
-                    return None
+            # Проверка статуса пары
+            markets = self.exchange.fetch_markets()
+            for m in markets:
+                if m['symbol'] == self.symbol:
+                    if m['info'].get('status') != 'TRADING':
+                        print(f"🚫 {self.symbol} — торговля заблокирована. Пропускаем.")
+                        return None
 
-        print(f"📤 Отправка рыночного ордера: {side} {amount}")
-        market_order = self.exchange.create_order(
-            symbol=self.symbol,
-            type='market',
-            side=side,
-            amount=amount
-        )
-        order_id = market_order.get('id', 'N/A')
-        print(f"✅ Рыночный ордер исполнен: {order_id}")
+            print(f"📤 Отправка рыночного ордера: {side} {amount}")
+            market_order = self.exchange.create_order(
+                symbol=self.symbol,
+                type='market',
+                side=side,
+                amount=amount
+            )
+            order_id = market_order.get('id', 'N/A')
+            print(f"✅ Рыночный ордер исполнен: {order_id}")
 
-        # Получаем цену входа
-        entry_price = market_order.get('price', None)
-        if not entry_price:
-            ticker = self.exchange.fetch_ticker(self.symbol)
-            entry_price = ticker['last']
+            # Получаем цену входа
+            entry_price = market_order.get('price', None)
+            if not entry_price:
+                ticker = self.exchange.fetch_ticker(self.symbol)
+                entry_price = ticker['last']
 
-        # Рассчитываем TP/SL
+            # Рассчитываем TP/SL
+            if side == 'buy':
+                stop_loss_price = entry_price * (1 - stop_loss_percent / 100)
+                take_profit_price = entry_price * (1 + take_profit_percent / 100)
+                self.trailing_stop_price = entry_price * (1 - self.trailing_distance_percent / 100)
+            else:
+                stop_loss_price = entry_price * (1 + stop_loss_percent / 100)
+                take_profit_price = entry_price * (1 - take_profit_percent / 100)
+                self.trailing_stop_price = entry_price * (1 + self.trailing_distance_percent / 100)
+
+            print(f"📊 Цена входа: {entry_price:.2f}")
+            print(f"⛔ Отправка стоп-лосса (stop_market): {stop_loss_price:.2f} ({stop_loss_percent}%)")
+            print(f"🎯 Отправка тейк-профита (limit): {take_profit_price:.2f} ({take_profit_percent}%)")
+
+            # Стоп-лосс
+            self.exchange.create_order(
+                symbol=self.symbol,
+                type='stop_market',
+                side='sell' if side == 'buy' else 'buy',
+                amount=amount,
+                params={'stopPrice': stop_loss_price, 'reduceOnly': True}
+            )
+
+            # Тейк-профит
+            self.exchange.create_order(
+                symbol=self.symbol,
+                type='limit',
+                side='sell' if side == 'buy' else 'buy',
+                amount=amount,
+                price=take_profit_price,
+                params={'reduceOnly': True}
+            )
+
+            # Сохраняем позицию
+            self.position = {
+                'side': side,
+                'entry_price': entry_price,
+                'amount': amount,
+                'last_trailing_price': entry_price
+            }
+
+            print(f"✅ УСПЕХ! Ордер {side} на {self.symbol} отправлен.")
+            return market_order
+
+        except Exception as e:
+            error_str = str(e)
+            if "position not exist" in error_str:
+                print(f"❌ {self.symbol}: Позиция не найдена — возможно, ордер не исполнился.")
+            elif "Invalid order quantity" in error_str:
+                print(f"❌ {self.symbol}: Неверный размер ордера. Проверь лимиты.")
+            elif "101415" in error_str:
+                print(f"🚫 {self.symbol}: Торговля временно заблокирована. Ждём...")
+            elif "101212" in error_str:
+                print(f"⚠️ {self.symbol}: Есть отложенные ордера — отмени их вручную.")
+            elif "Invalid order type" in error_str:
+                print(f"❌ {self.symbol}: Неверный тип ордера. Используй 'stop_market' и 'limit'.")
+            elif "reduceOnly" in error_str:
+                print(f"⚠️ {self.symbol}: reduceOnly требует существующей позиции — проверь, что ордер исполнен.")
+            else:
+                print(f"❌ Полная ошибка API {self.symbol}: {type(e).__name__}: {error_str}")
+            return None
+
+    def update_trailing_stop(self):
+        """Обновляет трейлинг-стоп, если цена двинулась в выгодную сторону"""
+        if not self.position:
+            return
+
+        current_price = self.exchange.fetch_ticker(self.symbol)['last']
+        side = self.position['side']
+        new_trailing_price = None
+
         if side == 'buy':
-            stop_loss_price = entry_price * (1 - stop_loss_percent / 100)
-            take_profit_price = entry_price * (1 + take_profit_percent / 100)
-            self.trailing_stop_price = entry_price * (1 - self.trailing_distance_percent / 100)
+            # Для лонга: трейлинг-стоп должен расти
+            new_trailing_price = current_price * (1 - self.trailing_distance_percent / 100)
+            if new_trailing_price > self.trailing_stop_price:
+                self.trailing_stop_price = new_trailing_price
+                print(f"📈 {self.symbol}: Трейлинг-стоп обновлён до {self.trailing_stop_price:.2f} (был {self.position['last_trailing_price']:.2f})")
         else:
-            stop_loss_price = entry_price * (1 + stop_loss_percent / 100)
-            take_profit_price = entry_price * (1 - take_profit_percent / 100)
-            self.trailing_stop_price = entry_price * (1 + self.trailing_distance_percent / 100)
+            # Для шорта: трейлинг-стоп должен падать
+            new_trailing_price = current_price * (1 + self.trailing_distance_percent / 100)
+            if new_trailing_price < self.trailing_stop_price:
+                self.trailing_stop_price = new_trailing_price
+                print(f"📉 {self.symbol}: Трейлинг-стоп обновлён до {self.trailing_stop_price:.2f} (был {self.position['last_trailing_price']:.2f})")
 
-        print(f"📊 Цена входа: {entry_price:.2f}")
-        print(f"⛔ Отправка стоп-лосса (stop_market): {stop_loss_price:.2f} ({stop_loss_percent}%)")
-        print(f"🎯 Отправка тейк-профита (limit): {take_profit_price:.2f} ({take_profit_percent}%)")
-
-        # Стоп-лосс
-        self.exchange.create_order(
-            symbol=self.symbol,
-            type='stop_market',
-            side='sell' if side == 'buy' else 'buy',
-            amount=amount,
-            params={'stopPrice': stop_loss_price, 'reduceOnly': True}
-        )
-
-        # Тейк-профит
-        self.exchange.create_order(
-            symbol=self.symbol,
-            type='limit',
-            side='sell' if side == 'buy' else 'buy',
-            amount=amount,
-            price=take_profit_price,
-            params={'reduceOnly': True}
-        )
-
-        # Сохраняем позицию
-        self.position = {
-            'side': side,
-            'entry_price': entry_price,
-            'amount': amount,
-            'last_trailing_price': entry_price
-        }
-
-        print(f"✅ УСПЕХ! Ордер {side} на {self.symbol} отправлен.")
-        return market_order
-
-    except Exception as e:
-        error_str = str(e)
-        if "position not exist" in error_str:
-            print(f"❌ {self.symbol}: Позиция не найдена — возможно, ордер не исполнился.")
-        elif "Invalid order quantity" in error_str:
-            print(f"❌ {self.symbol}: Неверный размер ордера. Проверь лимиты.")
-        elif "101415" in error_str:
-            print(f"🚫 {self.symbol}: Торговля временно заблокирована. Ждём...")
-        elif "101212" in error_str:
-            print(f"⚠️ {self.symbol}: Есть отложенные ордера — отмени их вручную.")
-        elif "Invalid order type" in error_str:
-            print(f"❌ {self.symbol}: Неверный тип ордера. Используй 'stop_market' и 'limit'.")
-        elif "reduceOnly" in error_str:
-            print(f"⚠️ {self.symbol}: reduceOnly требует существующей позиции — проверь, что ордер исполнен.")
-        else:
-            print(f"❌ Полная ошибка API {self.symbol}: {type(e).__name__}: {error_str}")
-        return None
+        self.position['last_trailing_price'] = current_price
