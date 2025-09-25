@@ -35,39 +35,41 @@ class BingXTrader:
         self.trailing_distance_percent = 1.0  # 1% от цены
 
     def _set_leverage(self, leverage):
-        """Устанавливает плечо через прямой POST-запрос к BingX"""
+        """Устанавливает плечо через прямой POST-запрос к BingX (USDT-M Perp Futures)"""
         try:
-            # Подготовка данных
             timestamp = int(time.time() * 1000)
             symbol_for_api = self.symbol.replace('-', '')  # BTCUSDT
             api_key = os.getenv('BINGX_API_KEY')
             secret_key = os.getenv('BINGX_SECRET_KEY')
 
-            params = {
-                'symbol': symbol_for_api,
-                'leverage': str(leverage),
-                'timestamp': timestamp
-            }
+            # ✅ ОБЯЗАТЕЛЬНО: параметры для подписи ДОЛЖНЫ совпадать с телом JSON
+            query_string = f"symbol={symbol_for_api}&leverage={leverage}&side=BOTH&timestamp={timestamp}"
 
-            # Сортируем параметры по ключу и объединяем в строку
-            query_string = '&'.join([f"{k}={v}" for k, v in sorted(params.items())])
-            
-            # Создаём подпись HMAC SHA256
+            # ✅ Генерируем подпись HMAC SHA256
             signature = hmac.new(
                 secret_key.encode(),
                 query_string.encode(),
                 hashlib.sha256
             ).hexdigest()
 
+            # ✅ ТЕЛО ЗАПРОСА — ТОЧНО СООТВЕТСТВУЕТ ТРЕБОВАНИЯМ BingX API
+            payload = {
+                "symbol": symbol_for_api,
+                "leverage": leverage,      # ← ЧИСЛО, а не строка!
+                "side": "BOTH",            # ← ОБЯЗАТЕЛЬНО для USDT-M futures
+                "timestamp": timestamp,
+                "signature": signature
+            }
+
             headers = {
                 'X-BX-APIKEY': api_key,
                 'Content-Type': 'application/json'
             }
 
-            url = 'https://open-api.bingx.com/openApi/swap/v2/trade/leverage'  # ✅ УБРАЛ лишние пробелы в конце!
+            # ✅ ПРАВИЛЬНЫЙ URL — из документации BingX
+            url = 'https://open-api.bingx.com/openApi/swap/v2/trade/leverage'
 
-            payload = {**params, 'signature': signature}
-
+            # ✅ ОТПРАВЛЯЕМ КАК JSON — ТАК И ТРЕБУЕТ API
             response = requests.post(url, json=payload, headers=headers)
             result = response.json()
 
