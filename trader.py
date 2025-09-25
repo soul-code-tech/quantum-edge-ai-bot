@@ -1,4 +1,4 @@
-# trader.py — с правильным API-вызовом плеча
+# trader.py — Quantum Edge AI Bot: BingXTrader (исправленная версия)
 import ccxt
 import os
 from dotenv import load_dotenv
@@ -10,39 +10,54 @@ class BingXTrader:
         self.symbol = symbol
         self.use_demo = use_demo
         self.leverage = leverage
+        
+        # Инициализация биржи
         self.exchange = ccxt.bingx({
             'apiKey': os.getenv('BINGX_API_KEY'),
             'secret': os.getenv('BINGX_SECRET_KEY'),
             'options': {'defaultType': 'swap'},
             'enableRateLimit': True,
         })
+        
         if use_demo:
             self.exchange.set_sandbox_mode(True)
 
-        # ✅ Устанавливаем плечо через правильный API
+        # Установка плеча при старте
         self._set_leverage(leverage)
 
+        # Хранение позиции для трейлинга
         self.position = None
         self.trailing_stop_price = None
-        self.trailing_distance_percent = 1.0
+        self.trailing_distance_percent = 1.0  # 1% от цены
 
     def _set_leverage(self, leverage):
+        """Устанавес плечо через прямой API-вызов"""
         try:
+            # Формат символа: BTCUSDT (без дефисов)
             symbol_for_api = self.symbol.replace('-', '')
-            response = self.exchange.privatePostLinearSwapApiV1TradingSetLeverage({
+            
+            # ✅ Правильный вызов через private_post_ + snake_case
+            response = self.exchange.private_post_linear_swap_api_v1_trading_set_leverage({
                 'symbol': symbol_for_api,
                 'leverage': str(leverage)
             })
+
+            # Проверяем ответ
             if response.get('code') == 0:
                 print(f"✅ {self.symbol}: Плечо установлено на {leverage}x")
             else:
                 msg = response.get('msg', 'unknown')
                 print(f"❌ Ошибка установки плеча: {msg}")
+
         except Exception as e:
-            print(f"⚠️ Не удалось установить плечо: {e}")
+            print(f"⚠️ Не удалось установить плечо для {self.symbol}: {e}")
 
     def place_order(self, side, amount, stop_loss_percent=1.5, take_profit_percent=3.0):
+        """
+        Открывает рыночную позицию + стоп-лосс + тейк-профит
+        """
         try:
+            # 🔍 Проверка статуса пары
             markets = self.exchange.fetch_markets()
             for m in markets:
                 if m['symbol'] == self.symbol:
@@ -60,11 +75,13 @@ class BingXTrader:
             order_id = market_order.get('id', 'N/A')
             print(f"✅ Рыночный ордер исполнен: {order_id}")
 
+            # 💵 Получаем цену входа
             entry_price = market_order.get('price', None)
             if not entry_price:
                 ticker = self.exchange.fetch_ticker(self.symbol)
                 entry_price = ticker['last']
 
+            # 📊 Рассчитываем TP/SL в процентах от цены
             if side == 'buy':
                 stop_loss_price = entry_price * (1 - stop_loss_percent / 100)
                 take_profit_price = entry_price * (1 + take_profit_percent / 100)
@@ -78,14 +95,19 @@ class BingXTrader:
             print(f"⛔ Отправка стоп-лосса (stop_market): {stop_loss_price:.2f} ({stop_loss_percent}%)")
             print(f"🎯 Отправка тейк-профита (limit): {take_profit_price:.2f} ({take_profit_percent}%)")
 
+            # ✅ Стоп-лосс: stop_market + reduceOnly
             self.exchange.create_order(
                 symbol=self.symbol,
                 type='stop_market',
                 side='sell' if side == 'buy' else 'buy',
                 amount=amount,
-                params={'stopPrice': stop_loss_price, 'reduceOnly': True}
+                params={
+                    'stopPrice': stop_loss_price,
+                    'reduceOnly': True
+                }
             )
 
+            # ✅ Тейк-профит: limit + reduceOnly
             self.exchange.create_order(
                 symbol=self.symbol,
                 type='limit',
@@ -95,6 +117,7 @@ class BingXTrader:
                 params={'reduceOnly': True}
             )
 
+            # 📦 Сохраняем позицию
             self.position = {
                 'side': side,
                 'entry_price': entry_price,
@@ -123,8 +146,8 @@ class BingXTrader:
                 print(f"❌ Полная ошибка API {self.symbol}: {type(e).__name__}: {error_str}")
             return None
 
-        def update_trailing_stop(self):
-        """Обновляет трейлинг-стоп для активной позиции"""
+    def update_trailing_stop(self):
+        """Обновляет трейлинг-стоп при движении цены в выгодную сторону"""
         if not self.position:
             return
 
@@ -138,7 +161,7 @@ class BingXTrader:
                     new_trailing_price = current_price * (1 - self.trailing_distance_percent / 100)
                     if new_trailing_price > self.trailing_stop_price:
                         self.trailing_stop_price = new_trailing_price
-                        print(f"📈 {self.symbol}: Трейлинг-стоп поднят: {self.trailing_stop_price:.2f}")
+                        print(f"📈 {self.symbol}: Трейлинг-стоп поднят до {self.trailing_stop_price:.2f}")
                         self._cancel_all_stops()
                         self.exchange.create_order(
                             symbol=self.symbol,
@@ -154,7 +177,7 @@ class BingXTrader:
                     new_trailing_price = current_price * (1 + self.trailing_distance_percent / 100)
                     if new_trailing_price < self.trailing_stop_price:
                         self.trailing_stop_price = new_trailing_price
-                        print(f"📉 {self.symbol}: Трейлинг-стоп опущен: {self.trailing_stop_price:.2f}")
+                        print(f"📉 {self.symbol}: Трейлинг-стоп опущен до {self.trailing_stop_price:.2f}")
                         self._cancel_all_stops()
                         self.exchange.create_order(
                             symbol=self.symbol,
@@ -167,3 +190,14 @@ class BingXTrader:
 
         except Exception as e:
             print(f"⚠️ {self.symbol}: Ошибка обновления трейлинга: {e}")
+
+    def _cancel_all_stops(self):
+        """Отменяет все активные стоп-ордера перед обновлением"""
+        try:
+            orders = self.exchange.fetch_open_orders(self.symbol)
+            for order in orders:
+                if order['type'] == 'stop_market' and order.get('reduceOnly'):
+                    self.exchange.cancel_order(order['id'], self.symbol)
+                    print(f"🗑️ {self.symbol}: Отменён стоп-ордер ID: {order['id']}")
+        except Exception as e:
+            print(f"⚠️ {self.symbol}: Не удалось отменить стоп-ордера: {e}")
