@@ -34,7 +34,7 @@ class BingXTrader:
         self.trailing_stop_price = None
         self.trailing_distance_percent = 1.0  # 1% от цены
 
-      def _set_leverage(self, leverage):
+    def _set_leverage(self, leverage):
         """Устанавливает плечо через прямой POST-запрос к BingX (swap)"""
         try:
             timestamp = int(time.time() * 1000)
