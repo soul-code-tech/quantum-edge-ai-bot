@@ -1,4 +1,4 @@
-# main.py — Quantum Edge AI Bot v4.0 (Render-Optimized — FINAL)
+# main.py — Quantum Edge AI Bot v5.0 (Цепочечный режим — ФИНАЛЬНАЯ ВЕРСИЯ)
 from flask import Flask
 import threading
 import time
@@ -29,13 +29,9 @@ SIGNAL_COOLDOWN = 3600
 UPDATE_TRAILING_INTERVAL = 300
 TEST_INTERVAL = 86400  # ✅ 24 часа в секундах
 
-# ✅ НОВАЯ ЛОГИКА ОБУЧЕНИЯ:
-# - Каждые 15 минут — одна пара (9 пар × 15 мин = 135 мин)
-# - После 9 пар — 30 минут перерыв
-# - Цикл: 135 + 30 = 165 минут
-LSTM_TRAIN_INTERVAL = 900   # 15 минут в секундах
-LSTM_CYCLE_LENGTH = 9       # 9 пар
-LSTM_BREAK_INTERVAL = 1800  # 30 минут после полного цикла
+# ✅ ЦЕПОЧКА ОБУЧЕНИЯ: каждые 10 минут — одна пара
+LSTM_TRAIN_DELAY = 600  # 10 минут в секундах — после сигнала
+MONITORING_CYCLE = 60   # 60 секунд между циклами мониторинга
 
 # Инициализация
 lstm_models = {}
@@ -52,8 +48,8 @@ print(f"💸 Риск: {RISK_PERCENT}% от депозита на сделку")
 print(f"⛔ Стоп-лосс: {STOP_LOSS_PCT}% | 🎯 Тейк-профит: {TAKE_PROFIT_PCT}%")
 print(f"📈 Трейлинг-стоп: {TRAILING_PCT}% от цены")
 print(f"⏳ Кулдаун: {SIGNAL_COOLDOWN} сек. на пару")
-print(f"🔄 LSTM обучение: каждые {LSTM_TRAIN_INTERVAL//60} минут — по одной паре")
-print(f"⏸️  Перерыв после полного цикла: {LSTM_BREAK_INTERVAL//60} минут")
+print(f"🔄 LSTM обучение: по цепочке — каждые {LSTM_TRAIN_DELAY//60} минут после сигнала")
+print(f"🔁 Мониторинг: {MONITORING_CYCLE} сек. между циклами")
 print(f"🎯 Тестовый ордер: раз в {TEST_INTERVAL//3600} часов")
 
 # Глобальные переменные
@@ -61,11 +57,11 @@ last_signal_time = {}
 last_trailing_update = {}
 last_test_order = 0
 last_lstm_train_time = 0
-last_lstm_next_symbol_index = 0
-last_lstm_cycle_end_time = 0  # Время окончания полного цикла (9 пар)
+last_lstm_next_symbol_index = 0  # Следующая пара для обучения
+last_signal_sent = False  # Был ли отправлен сигнал для обучения
 total_trades = 0
 
-# ✅ НОВОЕ: ПРИ ЗАПУСКЕ — ОБУЧАЕМ ТОЛЬКО ПЕРВУЮ ПАРУ (чтобы не перегрузить память)
+# ✅ НОВОЕ: При запуске — обучаем первую пару
 print("\n🔄 [СТАРТ] Обучение первой пары при запуске: " + SYMBOLS[0])
 df = get_bars(SYMBOLS[0], TIMEFRAME, LOOKBACK)
 if df is not None and len(df) >= 100:
@@ -73,30 +69,25 @@ if df is not None and len(df) >= 100:
     try:
         lstm_models[SYMBOLS[0]].train(df)
         print(f"✅ {SYMBOLS[0]}: LSTM переобучена!")
+        last_signal_sent = True  # ✅ Сигнал отправлен — теперь ждем 10 мин для следующей
+        last_lstm_train_time = time.time()
+        last_lstm_next_symbol_index = 1  # Готовим следующую
     except Exception as e:
         print(f"⚠️ {SYMBOLS[0]}: Ошибка обучения LSTM — {e}")
 else:
     print(f"⚠️ {SYMBOLS[0]}: Недостаточно данных для обучения (df={len(df) if df is not None else 'None'})")
-print("✅ Первая пара обучена при запуске. Остальные — по расписанию.\n")
+print("✅ Первая пара обучена. Ожидаем 10 минут для следующей.\n")
 
 def run_strategy():
-    global last_signal_time, last_trailing_update, last_test_order, total_trades, last_lstm_train_time, last_lstm_next_symbol_index, last_lstm_cycle_end_time
+    global last_signal_time, last_trailing_update, last_test_order, total_trades, last_lstm_train_time, last_lstm_next_symbol_index, last_signal_sent
     while True:
         try:
             current_time = time.time()
 
-            # ✅ 1. ОБУЧЕНИЕ LSTM — КАЖДЫЕ 15 МИНУТ — ПО ОДНОЙ ПАРЕ
-            # Условие: прошло 15 минут с момента последнего обучения ИЛИ прошло 30 минут после полного цикла
-            if current_time - last_lstm_train_time >= LSTM_TRAIN_INTERVAL:
-                # Проверяем: прошел ли полный цикл (9 пар)?
-                if last_lstm_cycle_end_time > 0 and current_time - last_lstm_cycle_end_time >= LSTM_BREAK_INTERVAL:
-                    # Перерыв закончился — начинаем новый цикл с первой пары
-                    last_lstm_next_symbol_index = 0
-                    last_lstm_cycle_end_time = 0
-
-                # Выбираем следующую пару
+            # ✅ 1. ОБУЧЕНИЕ — ПО ЦЕПОЧКЕ: ЖДЕМ 10 МИНУТ ПОСЛЕ СИГНАЛА
+            if last_signal_sent and current_time - last_lstm_train_time >= LSTM_TRAIN_DELAY:
                 symbol = SYMBOLS[last_lstm_next_symbol_index]
-                print(f"\n🔄 [LSTM] Обучение: {symbol} (шаг {last_lstm_next_symbol_index + 1}/{len(SYMBOLS)})")
+                print(f"\n🔄 [LSTM] Обучение: {symbol} (после сигнала от {SYMBOLS[(last_lstm_next_symbol_index - 1) % len(SYMBOLS)]})")
 
                 df = get_bars(symbol, TIMEFRAME, LOOKBACK)
                 if df is not None and len(df) >= 100:
@@ -104,25 +95,22 @@ def run_strategy():
                     try:
                         lstm_models[symbol].train(df)
                         print(f"✅ {symbol}: LSTM переобучена!")
+                        # ✅ Готовим следующий сигнал
+                        last_signal_sent = True
+                        last_lstm_train_time = current_time
+                        last_lstm_next_symbol_index = (last_lstm_next_symbol_index + 1) % len(SYMBOLS)
                     except Exception as e:
                         print(f"⚠️ {symbol}: Ошибка обучения LSTM — {e}")
+                        last_signal_sent = False  # Попробуем снова в следующем цикле
                 else:
                     print(f"⚠️ {symbol}: Недостаточно данных для обучения (df={len(df) if df is not None else 'None'})")
+                    last_signal_sent = False  # Попробуем снова в следующем цикле
 
-                # Переходим к следующей паре
-                last_lstm_next_symbol_index = (last_lstm_next_symbol_index + 1) % len(SYMBOLS)
-                last_lstm_train_time = current_time
-
-                # Если мы только что обучили последнюю пару (9-ю) — фиксируем время окончания цикла
-                if last_lstm_next_symbol_index == 0:
-                    last_lstm_cycle_end_time = current_time
-                    print(f"⏸️  Полный цикл из 9 пар завершен. Следующий цикл начнется через 30 минут.")
-
-            # ✅ 2. Анализ каждой пары с задержкой 10 сек
+            # ✅ 2. МОНИТОРИНГ И ТОРГОВЛЯ — КАЖДЫЕ 60 СЕКУНД (10 циклов между обучением)
             for i, symbol in enumerate(SYMBOLS):
                 print(f"\n--- [{time.strftime('%H:%M:%S')}] {symbol} ---")
                 
-                time.sleep(10)
+                time.sleep(10)  # Разбиваем цикл на 9 * 10 = 90 секунд — укладываемся в 10 минут
 
                 df = get_bars(symbol, TIMEFRAME, LOOKBACK)
                 if df is None or len(df) < 100:
@@ -201,8 +189,9 @@ def run_strategy():
                 )
                 last_test_order = current_time
 
-            print("\n💤 Ждём 60 секунд до следующего цикла...")
-            time.sleep(60)
+            # ✅ 5. ЖДЕМ 60 СЕКУНД — ЭТО И ЕСТЬ ОСНОВНОЙ ЦИКЛ МОНИТОРИНГА
+            print("\n💤 Ждём 60 секунд до следующего цикла мониторинга...")
+            time.sleep(MONITORING_CYCLE)
 
         except Exception as e:
             print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {type(e).__name__}: {str(e)}")
