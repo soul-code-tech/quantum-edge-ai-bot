@@ -1,4 +1,4 @@
-# main.py — Quantum Edge AI Bot v3.7 (Render-Optimized — ФИНАЛЬНАЯ ВЕРСИЯ)
+# main.py — Quantum Edge AI Bot v4.0 (Render-Optimized — FINAL)
 from flask import Flask
 import threading
 import time
@@ -11,11 +11,13 @@ from lstm_model import LSTMPredictor
 app = Flask(__name__)
 _bot_started = False
 
+# 9 пар — меньше нагрузки, больше диверсификации
 SYMBOLS = [
-    'SOL-USDT', 'BNB-USDT', 'AVAX-USDT', 'BTC-USDT', 'ETH-USDT', 
-    'DOGE-USDT', 'PENGU-USDT', 'SHIB-USDT', 'LINK-USDT'
+    'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT',
+    'DOGE-USDT', 'AVAX-USDT', 'PENGU-USDT', 'SHIB-USDT', 'LINK-USDT'
 ]
 
+# Параметры
 RISK_PERCENT = 1.0
 STOP_LOSS_PCT = 1.5
 TAKE_PROFIT_PCT = 3.0
@@ -25,9 +27,17 @@ TIMEFRAME = '1h'
 LOOKBACK = 200
 SIGNAL_COOLDOWN = 3600
 UPDATE_TRAILING_INTERVAL = 300
-TEST_INTERVAL = 86400
-LSTM_TRAIN_INTERVAL = 2400  # 40 минут
+TEST_INTERVAL = 86400  # ✅ 24 часа в секундах
 
+# ✅ НОВАЯ ЛОГИКА ОБУЧЕНИЯ:
+# - Каждые 15 минут — одна пара (9 пар × 15 мин = 135 мин)
+# - После 9 пар — 30 минут перерыв
+# - Цикл: 135 + 30 = 165 минут
+LSTM_TRAIN_INTERVAL = 900   # 15 минут в секундах
+LSTM_CYCLE_LENGTH = 9       # 9 пар
+LSTM_BREAK_INTERVAL = 1800  # 30 минут после полного цикла
+
+# Инициализация
 lstm_models = {}
 traders = {}
 
@@ -42,39 +52,49 @@ print(f"💸 Риск: {RISK_PERCENT}% от депозита на сделку")
 print(f"⛔ Стоп-лосс: {STOP_LOSS_PCT}% | 🎯 Тейк-профит: {TAKE_PROFIT_PCT}%")
 print(f"📈 Трейлинг-стоп: {TRAILING_PCT}% от цены")
 print(f"⏳ Кулдаун: {SIGNAL_COOLDOWN} сек. на пару")
-print(f"🔄 LSTM обучение: каждые {LSTM_TRAIN_INTERVAL//60} минут (по одной паре)")
+print(f"🔄 LSTM обучение: каждые {LSTM_TRAIN_INTERVAL//60} минут — по одной паре")
+print(f"⏸️  Перерыв после полного цикла: {LSTM_BREAK_INTERVAL//60} минут")
 print(f"🎯 Тестовый ордер: раз в {TEST_INTERVAL//3600} часов")
 
+# Глобальные переменные
 last_signal_time = {}
 last_trailing_update = {}
 last_test_order = 0
 last_lstm_train_time = 0
 last_lstm_next_symbol_index = 0
+last_lstm_cycle_end_time = 0  # Время окончания полного цикла (9 пар)
 total_trades = 0
 
-# ✅ ИСПРАВЛЕНО: ПРИ ЗАПУСКЕ — ОБУЧАЕМ ТОЛЬКО ПЕРВУЮ ПАРУ
-first_symbol = SYMBOLS[0]
-print(f"\n🔄 [СТАРТ] Обучение первой пары при запуске: {first_symbol}")
-df = get_bars(first_symbol, TIMEFRAME, LOOKBACK)
+# ✅ НОВОЕ: ПРИ ЗАПУСКЕ — ОБУЧАЕМ ТОЛЬКО ПЕРВУЮ ПАРУ (чтобы не перегрузить память)
+print("\n🔄 [СТАРТ] Обучение первой пары при запуске: " + SYMBOLS[0])
+df = get_bars(SYMBOLS[0], TIMEFRAME, LOOKBACK)
 if df is not None and len(df) >= 100:
     df = calculate_strategy_signals(df, 60)
     try:
-        lstm_models[first_symbol].train(df)
-        print(f"✅ {first_symbol}: LSTM переобучена!")
+        lstm_models[SYMBOLS[0]].train(df)
+        print(f"✅ {SYMBOLS[0]}: LSTM переобучена!")
     except Exception as e:
-        print(f"⚠️ {first_symbol}: Ошибка обучения LSTM — {e}")
+        print(f"⚠️ {SYMBOLS[0]}: Ошибка обучения LSTM — {e}")
 else:
-    print(f"⚠️ {first_symbol}: Недостаточно данных для обучения (df={len(df) if df is not None else 'None'})")
+    print(f"⚠️ {SYMBOLS[0]}: Недостаточно данных для обучения (df={len(df) if df is not None else 'None'})")
 print("✅ Первая пара обучена при запуске. Остальные — по расписанию.\n")
 
 def run_strategy():
-    global last_signal_time, last_trailing_update, last_test_order, total_trades, last_lstm_train_time, last_lstm_next_symbol_index
+    global last_signal_time, last_trailing_update, last_test_order, total_trades, last_lstm_train_time, last_lstm_next_symbol_index, last_lstm_cycle_end_time
     while True:
         try:
             current_time = time.time()
 
-            # ✅ 1. Обучение LSTM — КАЖДЫЕ 40 МИНУТ — ПО ОДНОЙ ПАРЕ
+            # ✅ 1. ОБУЧЕНИЕ LSTM — КАЖДЫЕ 15 МИНУТ — ПО ОДНОЙ ПАРЕ
+            # Условие: прошло 15 минут с момента последнего обучения ИЛИ прошло 30 минут после полного цикла
             if current_time - last_lstm_train_time >= LSTM_TRAIN_INTERVAL:
+                # Проверяем: прошел ли полный цикл (9 пар)?
+                if last_lstm_cycle_end_time > 0 and current_time - last_lstm_cycle_end_time >= LSTM_BREAK_INTERVAL:
+                    # Перерыв закончился — начинаем новый цикл с первой пары
+                    last_lstm_next_symbol_index = 0
+                    last_lstm_cycle_end_time = 0
+
+                # Выбираем следующую пару
                 symbol = SYMBOLS[last_lstm_next_symbol_index]
                 print(f"\n🔄 [LSTM] Обучение: {symbol} (шаг {last_lstm_next_symbol_index + 1}/{len(SYMBOLS)})")
 
@@ -89,8 +109,14 @@ def run_strategy():
                 else:
                     print(f"⚠️ {symbol}: Недостаточно данных для обучения (df={len(df) if df is not None else 'None'})")
 
+                # Переходим к следующей паре
                 last_lstm_next_symbol_index = (last_lstm_next_symbol_index + 1) % len(SYMBOLS)
                 last_lstm_train_time = current_time
+
+                # Если мы только что обучили последнюю пару (9-ю) — фиксируем время окончания цикла
+                if last_lstm_next_symbol_index == 0:
+                    last_lstm_cycle_end_time = current_time
+                    print(f"⏸️  Полный цикл из 9 пар завершен. Следующий цикл начнется через 30 минут.")
 
             # ✅ 2. Анализ каждой пары с задержкой 10 сек
             for i, symbol in enumerate(SYMBOLS):
@@ -129,7 +155,12 @@ def run_strategy():
                     risk_amount = equity * (RISK_PERCENT / 100)
                     stop_distance = atr * 1.5
                     amount = risk_amount / stop_distance if stop_distance > 0 else 0.001
-                    if amount < 0.001: amount = 0.001
+
+                    # ✅ ПОЛУЧАЕМ МИНИМАЛЬНЫЙ РАЗМЕР ОРДЕРА
+                    min_qty = traders[symbol].get_min_order_size()
+                    if amount < min_qty:
+                        amount = min_qty
+                        print(f"⚠️ {symbol}: Размер ордера {amount:.6f} увеличен до минимального: {min_qty}")
 
                     print(f"📊 Размер позиции: {amount:.6f} {symbol.split('-')[0]} | ATR: {atr:.4f}")
 
