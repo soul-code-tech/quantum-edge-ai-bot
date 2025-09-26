@@ -1,4 +1,4 @@
-# main.py — Quantum Edge AI Bot v3.3 (Render-Optimized — ФИНАЛЬНАЯ ВЕРСИЯ)
+# main.py — Quantum Edge AI Bot v3.4 (Render-Optimized — ФИНАЛЬНАЯ ВЕРСИЯ)
 from flask import Flask
 import threading
 import time
@@ -149,15 +149,15 @@ def run_strategy():
                     traders[symbol].update_trailing_stop()
                 last_trailing_update['global'] = current_time
 
-            # ✅ 4. Тестовый ордер — 1 раз в 24 часа — ТОЛЬКО РЫНОЧНЫЙ, БЕЗ TP/SL
+            # ✅ 4. ТЕСТОВЫЙ ОРДЕР — ТОЛЬКО РЫНОЧНЫЙ, БЕЗ TP/SL (stop_loss_percent=0, take_profit_percent=0)
             if current_time - last_test_order > TEST_INTERVAL:
                 test_symbol = SYMBOLS[0]
                 print(f"\n🎯 [ТЕСТ] ПРОВЕРКА СВЯЗИ: Принудительный MARKET BUY на {test_symbol} (раз в 24 часа)")
                 traders[test_symbol].place_order(
                     side='buy',
                     amount=0.001,
-                    stop_loss_percent=0,
-                    take_profit_percent=0
+                    stop_loss_percent=0,   # ← НЕ СТАВИМ СТОП-ЛАСС
+                    take_profit_percent=0  # ← НЕ СТАВИМ ТЕЙК-ПРОФИТ
                 )
                 last_test_order = current_time
 
