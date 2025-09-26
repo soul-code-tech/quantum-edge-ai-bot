@@ -5,7 +5,7 @@ import time
 import hashlib
 import hmac
 import requests
-import random  # ✅ ОБЯЗАТЕЛЬНО: для fetch_with_retry
+import random  # ✅ ОБЯЗАТЕЛЬНО ДЛЯ fetch_with_retry
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -37,7 +37,7 @@ class BingXTrader:
         self.trailing_distance_percent = 1.0  # 1% от цены
 
     def _set_leverage(self, leverage):
-        """Устанавливает плечо через прямой POST-запрос к BingX (swap) — для полной автоматизации"""
+        """Устанавливает плечо через прямой POST-запрос к BingX (swap)"""
         try:
             timestamp = int(time.time() * 1000)
             symbol_for_api = self.symbol.replace('-', '')  # BTCUSDT
@@ -167,34 +167,33 @@ class BingXTrader:
                 best_ask = self.get_best_price('sell')
                 self.take_profit_price = best_ask * (1 - buffer)
 
-            print(f"📊 Цена входа: {entry_price:.2f}")
-            print(f"⛔ Отправка стоп-лосса (stop_limit): {stop_loss_price:.2f} ({stop_loss_percent}%)")
-            print(f"🎯 Отправка тейк-профита (limit): {self.take_profit_price:.2f} ({take_profit_percent}% + комиссия)")
+            # ✅ УСЛОВИЕ: ЕСЛИ stop_loss_percent == 0 — НЕ СТАВИМ СТОП-ЛАСС
+            if stop_loss_percent > 0:
+                stop_limit_price = stop_loss_price * (1 - 0.0005)  # На 0.05% ниже стопа — чтобы гарантировать исполнение
+                self.exchange.create_order(
+                    symbol=self.symbol,
+                    type='stop_limit',
+                    side='sell' if side == 'buy' else 'buy',
+                    amount=amount,
+                    price=stop_limit_price,
+                    params={
+                        'stopPrice': stop_loss_price,
+                        'reduceOnly': True
+                    }
+                )
+                print(f"⛔ Отправка стоп-лосса (stop_limit): {stop_loss_price:.2f} ({stop_loss_percent}%)")
 
-            # ✅ СТОП-ЛАСС — ЛИМИТНЫЙ, А НЕ РЫНОЧНЫЙ — БЕЗ ПРОСКАЛЬЗЫВАНИЯ
-            stop_limit_price = stop_loss_price * (1 - 0.0005)  # На 0.05% ниже стопа — чтобы гарантировать исполнение
-
-            self.exchange.create_order(
-                symbol=self.symbol,
-                type='stop_limit',
-                side='sell' if side == 'buy' else 'buy',
-                amount=amount,
-                price=stop_limit_price,
-                params={
-                    'stopPrice': stop_loss_price,
-                    'reduceOnly': True
-                }
-            )
-
-            # ✅ ТЕЙК-ПРОФИТ — ЛИМИТНЫЙ ОРДЕР
-            self.exchange.create_order(
-                symbol=self.symbol,
-                type='limit',
-                side='sell' if side == 'buy' else 'buy',
-                amount=amount,
-                price=self.take_profit_price,
-                params={'reduceOnly': True}
-            )
+            # ✅ УСЛОВИЕ: ЕСЛИ take_profit_percent == 0 — НЕ СТАВИМ ТЕЙК-ПРОФИТ
+            if take_profit_percent > 0:
+                self.exchange.create_order(
+                    symbol=self.symbol,
+                    type='limit',
+                    side='sell' if side == 'buy' else 'buy',
+                    amount=amount,
+                    price=self.take_profit_price,
+                    params={'reduceOnly': True}
+                )
+                print(f"🎯 Отправка тейк-профита (limit): {self.take_profit_price:.2f} ({take_profit_percent}% + комиссия)")
 
             # Сохраняем позицию
             self.position = {
