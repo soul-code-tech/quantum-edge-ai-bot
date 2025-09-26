@@ -10,7 +10,7 @@ def fetch_with_retry(func, max_retries=3, delay=2, backoff=1.5):
     """
     base_urls = [
         'https://open-api.bingx.com',
-        'https://open-api.bingx.io'  # Альтернатива — часто работает при блокировке основного
+        'https://open-api.bingx.io'
     ]
     
     for attempt in range(max_retries):
