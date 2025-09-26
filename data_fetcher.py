@@ -5,9 +5,7 @@ import time
 import random
 
 def fetch_with_retry(func, max_retries=3, delay=2, backoff=1.5):
-    """
-    Умный retry для API-запросов BingX — с backoff и альтернативными доменами
-    """
+    """Умный retry для API-запросов BingX"""
     base_urls = [
         'https://open-api.bingx.com',
         'https://open-api.bingx.io'
@@ -28,7 +26,7 @@ def fetch_with_retry(func, max_retries=3, delay=2, backoff=1.5):
                 wait_time = delay * (backoff ** attempt) + random.uniform(0, 1)
                 print(f"⚠️ Ошибка при обращении к {base_url}: {e}. Повтор через {wait_time:.1f} сек. (попытка {attempt + 1}/{max_retries})")
                 time.sleep(wait_time)
-                break  # Переход к следующему домену
+                break
 
 def get_bars(symbol='BTC-USDT', timeframe='1h', limit=100):
     """Получает OHLCV-данные с биржи с защитой от сбоев"""
