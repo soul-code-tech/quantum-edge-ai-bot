@@ -5,3 +5,4 @@ numpy==1.26.4
 ta==0.10.3
 tensorflow==2.16.1
 python-dotenv==1.0.1
+scikit-learn==1.5.2  # ← ✅ ДОБАВИЛИ ЭТУ СТРОЧКУ!
