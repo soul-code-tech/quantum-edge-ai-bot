@@ -1,4 +1,4 @@
-# main.py — Quantum Edge AI Bot v3.2 (Render-Optimized — ФИНАЛЬНАЯ ВЕРСИЯ)
+# main.py — Quantum Edge AI Bot v3.3 (Render-Optimized — ФИНАЛЬНАЯ ВЕРСИЯ)
 from flask import Flask
 import threading
 import time
@@ -14,7 +14,7 @@ _bot_started = False
 # 9 пар — меньше нагрузки, больше диверсификации
 SYMBOLS = [
     'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT',
-    'DOGE-USDT', 'AVAX-USDT', 'PENGU-USDT', 'LINK-USDT'
+    'DOGE-USDT', 'AVAX-USDT', 'PENGU-USDT', 'SHIB-USDT', 'LINK-USDT'
 ]
 
 # Параметры
@@ -28,7 +28,7 @@ LOOKBACK = 200
 SIGNAL_COOLDOWN = 3600
 UPDATE_TRAILING_INTERVAL = 300
 TEST_INTERVAL = 86400  # ✅ 24 часа в секундах
-LSTM_TRAIN_INTERVAL = 1800  # ✅ Обучение каждые 30 минут
+LSTM_TRAIN_INTERVAL = 2400  # ✅ 40 минут — идеально для Render Free
 
 # Инициализация
 lstm_models = {}
@@ -53,7 +53,7 @@ last_signal_time = {}
 last_trailing_update = {}
 last_test_order = 0
 last_lstm_train_time = 0
-last_lstm_next_symbol_index = 0
+last_lstm_next_symbol_index = 0  # ✅ Новый индекс для поочерёдного обучения
 total_trades = 0
 
 def run_strategy():
@@ -62,10 +62,11 @@ def run_strategy():
         try:
             current_time = time.time()
 
-            # ✅ 1. Обучение LSTM — каждые 30 минут, по одной паре
+            # ✅ 1. Обучение LSTM — КАЖДЫЕ 40 МИНУТ — ПО ОДНОЙ ПАРЕ
             if current_time - last_lstm_train_time >= LSTM_TRAIN_INTERVAL:
-                print(f"\n🔄 [LSTM] Обучение: {SYMBOLS[last_lstm_next_symbol_index]} (шаг {last_lstm_next_symbol_index + 1}/{len(SYMBOLS)})")
-                symbol = SYMBOLS[last_lstm_next_symbol_index]
+                symbol = SYMBOLS[last_lstm_next_symbol_index]  # Берём следующую по порядку
+                print(f"\n🔄 [LSTM] Обучение: {symbol} (шаг {last_lstm_next_symbol_index + 1}/{len(SYMBOLS)})")
+
                 df = get_bars(symbol, TIMEFRAME, LOOKBACK)
                 if df is not None and len(df) >= 100:
                     df = calculate_strategy_signals(df, 60)
@@ -75,10 +76,11 @@ def run_strategy():
                     except Exception as e:
                         print(f"⚠️ {symbol}: Ошибка обучения LSTM — {e}")
                 else:
-                    print(f"⚠️ {symbol}: Недостаточно данных для обучения")
+                    print(f"⚠️ {symbol}: Недостаточно данных для обучения (df={len(df) if df is not None else 'None'})")
 
+                # Переходим к следующей паре (циклически)
                 last_lstm_next_symbol_index = (last_lstm_next_symbol_index + 1) % len(SYMBOLS)
-                last_lstm_train_time = current_time
+                last_lstm_train_time = current_time  # Сбрасываем таймер на 40 минут
 
             # ✅ 2. Анализ каждой пары с задержкой 10 сек
             for i, symbol in enumerate(SYMBOLS):
@@ -154,8 +156,8 @@ def run_strategy():
                 traders[test_symbol].place_order(
                     side='buy',
                     amount=0.001,
-                    stop_loss_percent=0,   # ← НЕТ СТОП-ЛОССА
-                    take_profit_percent=0  # ← НЕТ ТЕЙК-ПРОФИТА
+                    stop_loss_percent=0,
+                    take_profit_percent=0
                 )
                 last_test_order = current_time
 
