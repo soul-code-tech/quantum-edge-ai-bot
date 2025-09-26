@@ -1,4 +1,4 @@
-# main.py — Quantum Edge AI Bot v6.3 — РАБОТАЕТ НА RENDER.COM 24/7
+# main.py — Quantum Edge AI Bot v7.0 — РАБОТАЕТ НА RENDER.COM 24/7
 from flask import Flask
 import threading
 import time
@@ -14,7 +14,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler()  # Вывод в лог Render
+        logging.StreamHandler()
     ]
 )
 
@@ -34,21 +34,21 @@ TAKE_PROFIT_PCT = 3.0
 TRAILING_PCT = 1.0
 LSTM_CONFIDENCE = 0.55
 TIMEFRAME = '1h'
-LOOKBACK = 50  # ✅ УМЕНЬШИЛИ С 100 ДО 50 — БЕЗОПАСНО И РАБОТАЕТ!
+LOOKBACK = 50
 SIGNAL_COOLDOWN = 3600
 UPDATE_TRAILING_INTERVAL = 300
-TEST_INTERVAL = 86400  # 24 часа
+TEST_INTERVAL = 86400
 
 # ЦЕПОЧКА ОБУЧЕНИЯ: каждые 10 минут — одна пара (по порядку)
-LSTM_TRAIN_DELAY = 600  # 10 минут
-MONITORING_CYCLE = 60   # 60 секунд между циклами мониторинга
+LSTM_TRAIN_DELAY = 600
+MONITORING_CYCLE = 60
 
 # Инициализация
 lstm_models = {}
 traders = {}
 
 for symbol in SYMBOLS:
-    lstm_models[symbol] = LSTMPredictor(lookback=50)  # ✅ 50 свечей
+    lstm_models[symbol] = LSTMPredictor(lookback=50)
     traders[symbol] = BingXTrader(symbol=symbol, use_demo=True, leverage=10)
 
 logging.info("✅ [СТАРТ] Quantum Edge AI Bot запущен на 9 криптопарах")
@@ -67,7 +67,7 @@ last_signal_time = {}
 last_trailing_update = {}
 last_test_order = 0
 last_lstm_train_time = 0
-last_lstm_next_symbol_index = 0  # Индекс следующей пары для обучения
+last_lstm_next_symbol_index = 0
 total_trades = 0
 
 # ✅ Обучаем первую пару при запуске
@@ -76,10 +76,10 @@ df = get_bars(SYMBOLS[0], TIMEFRAME, LOOKBACK)
 if df is not None and len(df) >= 100:
     df = calculate_strategy_signals(df, 60)
     try:
-        lstm_models[SYMBOLS[0]].train(df, SYMBOLS[0])  # ← Передаём symbol!
+        lstm_models[SYMBOLS[0]].train(df, SYMBOLS[0])
         logging.info(f"✅ {SYMBOLS[0]}: LSTM обучена и сохранена!")
         last_lstm_train_time = time.time()
-        last_lstm_next_symbol_index = 1  # Готовим следующую
+        last_lstm_next_symbol_index = 1
     except Exception as e:
         logging.warning(f"⚠️ {SYMBOLS[0]}: Ошибка обучения LSTM — {e}")
 else:
@@ -100,7 +100,7 @@ def run_strategy():
                 if df is not None and len(df) >= 100:
                     df = calculate_strategy_signals(df, 60)
                     try:
-                        lstm_models[symbol].train(df, symbol)  # ← Передаём symbol!
+                        lstm_models[symbol].train(df, symbol)
                         logging.info(f"✅ {symbol}: LSTM обучена и сохранена!")
                         last_lstm_train_time = current_time
                         last_lstm_next_symbol_index = (last_lstm_next_symbol_index + 1) % len(SYMBOLS)
@@ -113,7 +113,7 @@ def run_strategy():
             for i, symbol in enumerate(SYMBOLS):
                 logging.info(f"\n--- [{time.strftime('%H:%M:%S')}] {symbol} ---")
 
-                time.sleep(10)  # Разбиваем цикл на 90 сек
+                time.sleep(10)
 
                 df = get_bars(symbol, TIMEFRAME, LOOKBACK)
                 if df is None or len(df) < 100:
@@ -132,7 +132,6 @@ def run_strategy():
                     logging.info(f"⏳ Кулдаун: {symbol} — пропускаем")
                     continue
 
-                # ✅ ИСПРАВЛЕНО: передаём и df, и symbol
                 lstm_prob = lstm_models[symbol].predict_next(df, symbol)
                 lstm_confident = lstm_prob > LSTM_CONFIDENCE
                 logging.info(f"🧠 LSTM: {symbol} — {lstm_prob:.2%} → {'✅ ДОПУСТИМ' if lstm_confident else '❌ ОТКЛОНЕНО'}")
@@ -219,9 +218,14 @@ def wake_up():
 def health_check():
     return "OK", 200
 
-# ✅ КРИТИЧЕСКИЙ ШАГ — ЗАПУСКАЕМ FLASK НА ПОРТУ 10000
+# ✅ КРИТИЧЕСКИЙ ШАГ — ЗАПУСКАЕМ FLASK В ГЛАВНОМ ПОТОКЕ — БЕЗ ЗАДЕРЖЕК!
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     logging.info(f"🌐 Flask сервер запущен на порту {port}")
-    time.sleep(10)  # ✅ ДАЁМ RENDER 10 СЕКУНД УВИДЕТЬ ПОРТ
+
+    # ✅ ЗАПУСКАЕМ БОТ В ФОНЕ
+    thread = threading.Thread(target=run_strategy, daemon=True)
+    thread.start()
+
+    # ✅ ЗАПУСКАЕМ FLASK — ОН БЛОКИРУЕТ ГЛАВНЫЙ ПОТОК, НО СЛУШАЕТ ПОРТ!
     app.run(host='0.0.0.0', port=port)
