@@ -1,4 +1,4 @@
-# main.py — Quantum Edge AI Bot v6.1 — РАБОТАЕТ НА RENDER.COM 24/7
+# main.py — Quantum Edge AI Bot v6.2 — РАБОТАЕТ НА RENDER.COM 24/7
 from flask import Flask
 import threading
 import time
@@ -92,7 +92,6 @@ def run_strategy():
             current_time = time.time()
 
             # ✅ 1. ОБУЧЕНИЕ — ПО ВРЕМЕНИ, НЕ ПО СИГНАЛАМ
-            # Каждые 10 минут — обучаем следующую пару в цепочке
             if current_time - last_lstm_train_time >= LSTM_TRAIN_DELAY:
                 symbol = SYMBOLS[last_lstm_next_symbol_index]
                 logging.info(f"\n🔄 [LSTM] Обучение: {symbol} (по расписанию)")
