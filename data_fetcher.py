@@ -1,4 +1,3 @@
-# data_fetcher.py
 import ccxt
 import pandas as pd
 import time
@@ -7,8 +6,8 @@ import random
 def fetch_with_retry(func, max_retries=3, delay=2, backoff=1.5):
     """Умный retry для API-запросов BingX"""
     base_urls = [
-        'https://open-api.bingx.com',
-        'https://open-api.bingx.io'
+        'https://open-api.bingx.com',      # ✅ УБРАНЫ ПРОБЕЛЫ!
+        'https://open-api.bingx.io'       # ✅ УБРАНЫ ПРОБЕЛЫ!
     ]
     
     for attempt in range(max_retries):
@@ -17,6 +16,7 @@ def fetch_with_retry(func, max_retries=3, delay=2, backoff=1.5):
                 exchange = ccxt.bingx({
                     'options': {'defaultType': 'swap', 'baseUrl': base_url},
                     'enableRateLimit': True,
+                    'headers': {'User-Agent': 'QuantumEdgeAI-Bot/1.0'}
                 })
                 result = func(exchange)
                 return result
