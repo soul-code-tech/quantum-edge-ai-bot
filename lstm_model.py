@@ -1,246 +1,91 @@
-# main.py — Quantum Edge AI Bot v6.3 — РАБОТАЕТ НА RENDER.COM 24/7
-from flask import Flask
-import threading
-import time
+# lstm_model.py — ФИНАЛЬНАЯ РАБОЧАЯ ВЕРСИЯ — СОХРАНЯЕТ И ЗАГРУЖАЕТ МОДЕЛИ
+import numpy as np
+import pandas as pd
+from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.models import Sequential, load_model
+from tensorflow.keras.layers import LSTM, Dense, Dropout
+from tensorflow.keras.callbacks import ModelCheckpoint
 import os
-import logging
-from data_fetcher import get_bars
-from strategy import calculate_strategy_signals
-from trader import BingXTrader
-from lstm_model import LSTMPredictor
 
-# Настройка логирования
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler()  # Вывод в лог Render
-    ]
-)
+class LSTMPredictor:
+    def __init__(self, lookback=100, model_dir="models"):
+        self.lookback = lookback
+        self.scaler = MinMaxScaler(feature_range=(0, 1))
+        self.model = None
+        self.is_trained = False
+        self.model_dir = model_dir
+        os.makedirs(self.model_dir, exist_ok=True)  # Создаём папку, если её нет
 
-app = Flask(__name__)
-_bot_started = False
+    def prepare_features(self, df):
+        df_features = df[['close', 'volume', 'rsi', 'sma20', 'atr']].copy().dropna()
+        if len(df_features) == 0:
+            raise ValueError("Нет данных после удаления NaN")
+        scaled = self.scaler.fit_transform(df_features)
+        return scaled
 
-# 9 пар — в строгом порядке цепочки
-SYMBOLS = [
-    'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT',
-    'DOGE-USDT', 'AVAX-USDT', 'PENGU-USDT', 'SHIB-USDT', 'LINK-USDT'
-]
+    def create_sequences(self, data):
+        X, y = [], []
+        for i in range(self.lookback, len(data)):
+            X.append(data[i-self.lookback:i])
+            y.append(1 if data[i, 0] > data[i-1, 0] else 0)  # ↑ = 1, ↓ = 0
+        return np.array(X), np.array(y)
 
-# Параметры
-RISK_PERCENT = 1.0
-STOP_LOSS_PCT = 1.5
-TAKE_PROFIT_PCT = 3.0
-TRAILING_PCT = 1.0
-LSTM_CONFIDENCE = 0.55  # ✅ Снижено до 55% — выше шансов на сделку
-TIMEFRAME = '1h'
-LOOKBACK = 100  # ✅ 100 свечей
-SIGNAL_COOLDOWN = 3600
-UPDATE_TRAILING_INTERVAL = 300
-TEST_INTERVAL = 86400  # 24 часа
+    def build_model(self, input_shape):
+        model = Sequential()
+        model.add(LSTM(64, return_sequences=True, input_shape=input_shape))
+        model.add(Dropout(0.3))
+        model.add(LSTM(32, return_sequences=False))
+        model.add(Dropout(0.3))
+        model.add(Dense(16, activation='relu'))
+        model.add(Dense(1, activation='sigmoid'))
+        model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+        self.model = model
 
-# ЦЕПОЧКА ОБУЧЕНИЯ: каждые 10 минут — одна пара (по порядку)
-LSTM_TRAIN_DELAY = 600  # 10 минут
-MONITORING_CYCLE = 60   # 60 секунд между циклами мониторинга
-
-# Инициализация
-lstm_models = {}
-traders = {}
-
-for symbol in SYMBOLS:
-    lstm_models[symbol] = LSTMPredictor(lookback=100)
-    traders[symbol] = BingXTrader(symbol=symbol, use_demo=True, leverage=10)
-
-logging.info("✅ [СТАРТ] Quantum Edge AI Bot запущен на 9 криптопарах")
-logging.info(f"📊 ПАРЫ: {', '.join(SYMBOLS)}")
-logging.info(f"🧠 LSTM: порог уверенности {LSTM_CONFIDENCE * 100}%")
-logging.info(f"💸 Риск: {RISK_PERCENT}% от депозита на сделку")
-logging.info(f"⛔ Стоп-лосс: {STOP_LOSS_PCT}% | 🎯 Тейк-профит: {TAKE_PROFIT_PCT}%")
-logging.info(f"📈 Трейлинг-стоп: {TRAILING_PCT}% от цены")
-logging.info(f"⏳ Кулдаун: {SIGNAL_COOLDOWN} сек. на пару")
-logging.info(f"🔄 LSTM обучение: по цепочке — каждые {LSTM_TRAIN_DELAY//60} минут")
-logging.info(f"🔁 Мониторинг: {MONITORING_CYCLE} сек. между циклами")
-logging.info(f"🎯 Тестовый ордер: раз в {TEST_INTERVAL//3600} часов")
-
-# Глобальные переменные
-last_signal_time = {}
-last_trailing_update = {}
-last_test_order = 0
-last_lstm_train_time = 0
-last_lstm_next_symbol_index = 0
-total_trades = 0
-
-# ✅ КРИТИЧЕСКИЙ ШАГ: ПРИНУДИТЕЛЬНОЕ ОБУЧЕНИЕ ПЕРВОЙ ПАРЫ ПРИ ЗАПУСКЕ
-def force_train_first_model():
-    global last_lstm_train_time, last_lstm_next_symbol_index
-    symbol = SYMBOLS[0]
-    logging.info(f"\n🔧 [ПРИНУДИТЕЛЬНОЕ ОБУЧЕНИЕ] Попытка обучить {symbol}...")
-    df = get_bars(symbol, TIMEFRAME, LOOKBACK)
-    if df is None:
-        logging.error(f"❌ get_bars() вернул None для {symbol}")
-        return
-    if len(df) < 100:
-        logging.error(f"❌ Для {symbol} получено только {len(df)} свечей (нужно ≥100)")
-        return
-
-    # Выводим первые и последние данные для отладки
-    logging.info(f"📊 Данные для {symbol}: {len(df)} строк. Последняя цена: {df['close'].iloc[-1]:.2f}, RSI: {df['rsi'].iloc[-1]:.2f}")
-
-    df = calculate_strategy_signals(df, 60)
-    try:
-        lstm_models[symbol].train(df, symbol)
-        logging.info(f"✅ {symbol}: LSTM обучена и сохранена!")
-        last_lstm_train_time = time.time()
-        last_lstm_next_symbol_index = 1
-    except Exception as e:
-        logging.error(f"❌ Ошибка обучения {symbol}: {e}")
-
-# Запускаем принудительное обучение
-force_train_first_model()
-
-def run_strategy():
-    global last_signal_time, last_trailing_update, last_test_order, total_trades, last_lstm_train_time, last_lstm_next_symbol_index
-    while True:
+    def train(self, df, symbol):
+        """Обучаем и сохраняем модель в файл"""
         try:
-            current_time = time.time()
+            data = self.prepare_features(df)
+            X, y = self.create_sequences(data)
+            if len(X) == 0:
+                raise ValueError(f"Нет последовательностей для {symbol}")
+            X = X.reshape((X.shape[0], X.shape[1], 5))
 
-            # ✅ 1. ОБУЧЕНИЕ — ПО ВРЕМЕНИ, НЕ ПО СИГНАЛАМ
-            if current_time - last_lstm_train_time >= LSTM_TRAIN_DELAY:
-                symbol = SYMBOLS[last_lstm_next_symbol_index]
-                logging.info(f"\n🔄 [LSTM] Обучение: {symbol} (по расписанию)")
+            if self.model is None:
+                self.build_model(input_shape=(X.shape[1], X.shape[2]))
 
-                df = get_bars(symbol, TIMEFRAME, LOOKBACK)
-                if df is None:
-                    logging.error(f"❌ get_bars() вернул None для {symbol}")
-                    last_lstm_next_symbol_index = (last_lstm_next_symbol_index + 1) % len(SYMBOLS)
-                    continue
-                if len(df) < 100:
-                    logging.error(f"❌ Для {symbol} получено только {len(df)} свечей (нужно ≥100)")
-                    last_lstm_next_symbol_index = (last_lstm_next_symbol_index + 1) % len(SYMBOLS)
-                    continue
+            model_path = os.path.join(self.model_dir, f"{symbol}.keras")
+            checkpoint = ModelCheckpoint(model_path, monitor='loss', save_best_only=True, mode='min')
 
-                df = calculate_strategy_signals(df, 60)
-                try:
-                    lstm_models[symbol].train(df, symbol)
-                    logging.info(f"✅ {symbol}: LSTM обучена и сохранена!")
-                    last_lstm_train_time = current_time
-                    last_lstm_next_symbol_index = (last_lstm_next_symbol_index + 1) % len(SYMBOLS)
-                except Exception as e:
-                    logging.warning(f"⚠️ {symbol}: Ошибка обучения LSTM — {e}")
-                    last_lstm_next_symbol_index = (last_lstm_next_symbol_index + 1) % len(SYMBOLS)
-
-            # ✅ 2. МОНИТОРИНГ И ТОРГОВЛЯ — КАЖДЫЕ 60 СЕКУНД
-            for i, symbol in enumerate(SYMBOLS):
-                logging.info(f"\n--- [{time.strftime('%H:%M:%S')}] {symbol} ---")
-
-                time.sleep(10)  # Разбиваем цикл на 90 сек
-
-                df = get_bars(symbol, TIMEFRAME, LOOKBACK)
-                if df is None or len(df) < 100:
-                    logging.error(f"❌ Недостаточно данных для {symbol}")
-                    continue
-
-                df = calculate_strategy_signals(df, 60)
-                current_price = df['close'].iloc[-1]
-                buy_signal = df['buy_signal'].iloc[-1]
-                sell_signal = df['sell_signal'].iloc[-1]
-                long_score = df['long_score'].iloc[-1]
-                short_score = df['short_score'].iloc[-1]
-
-                last_time = last_signal_time.get(symbol, 0)
-                if current_time - last_time < SIGNAL_COOLDOWN:
-                    logging.info(f"⏳ Кулдаун: {symbol} — пропускаем")
-                    continue
-
-                # ✅ ИСПРАВЛЕНО: передаём и df, и symbol
-                lstm_prob = lstm_models[symbol].predict_next(df, symbol)
-                lstm_confident = lstm_prob > LSTM_CONFIDENCE
-                logging.info(f"🧠 LSTM: {symbol} — {lstm_prob:.2%} → {'✅ ДОПУСТИМ' if lstm_confident else '❌ ОТКЛОНЕНО'}")
-
-                strong_strategy = (buy_signal and long_score >= 5) or (sell_signal and short_score >= 5)
-                if strong_strategy and lstm_confident:
-                    side = 'buy' if buy_signal else 'sell'
-                    logging.info(f"🎯 [СИГНАЛ] {side.upper()} на {symbol}")
-
-                    atr = df['atr'].iloc[-1]
-                    equity = 100.0
-                    risk_amount = equity * (RISK_PERCENT / 100)
-                    stop_distance = atr * 1.5
-                    amount = risk_amount / stop_distance if stop_distance > 0 else 0.001
-
-                    min_qty = traders[symbol].get_min_order_size()
-                    if amount < min_qty:
-                        amount = min_qty
-                        logging.warning(f"⚠️ {symbol}: Размер ордера {amount:.6f} увеличен до минимального: {min_qty}")
-
-                    logging.info(f"📊 Размер позиции: {amount:.6f} {symbol.split('-')[0]} | ATR: {atr:.4f}")
-
-                    order = traders[symbol].place_order(
-                        side=side,
-                        amount=amount,
-                        stop_loss_percent=STOP_LOSS_PCT,
-                        take_profit_percent=TAKE_PROFIT_PCT
-                    )
-
-                    if order:
-                        logging.info(f"✅ УСПЕХ! Ордер {side} на {symbol} отправлен.")
-                        total_trades += 1
-                        last_signal_time[symbol] = current_time
-                    else:
-                        logging.error(f"❌ ОШИБКА: Ордер не отправлен на {symbol}")
-
-                else:
-                    if buy_signal or sell_signal:
-                        score = long_score if buy_signal else short_score
-                        logging.warning(f"⚠️ {symbol}: Сигнал есть, но не достаточно сильный (score={score}) или LSTM не уверен ({lstm_prob:.2%}) — пропускаем.")
-
-            # ✅ 3. Обновление трейлинг-стопов — каждые 5 минут
-            if current_time - last_trailing_update.get('global', 0) > UPDATE_TRAILING_INTERVAL:
-                logging.info("\n🔄 Обновление трейлинг-стопов для всех пар...")
-                for symbol in SYMBOLS:
-                    traders[symbol].update_trailing_stop()
-                last_trailing_update['global'] = current_time
-
-            # ✅ 4. ТЕСТОВЫЙ ОРДЕР — раз в 24 часа
-            if current_time - last_test_order > TEST_INTERVAL:
-                test_symbol = SYMBOLS[0]
-                logging.info(f"\n🎯 [ТЕСТ] ПРОВЕРКА СВЯЗИ: Принудительный MARKET BUY на {test_symbol} (раз в 24 часа)")
-                traders[test_symbol].place_order(
-                    side='buy',
-                    amount=0.001,
-                    stop_loss_percent=0,
-                    take_profit_percent=0
-                )
-                last_test_order = current_time
-
-            # ✅ 5. ЖДЕМ 60 СЕКУНД — ОСНОВНОЙ ЦИКЛ
-            logging.info("\n💤 Ждём 60 секунд до следующего цикла мониторинга...")
-            time.sleep(MONITORING_CYCLE)
-
+            print(f"🧠 Обучение модели для {symbol}... ({len(X)} последовательностей)")
+            self.model.fit(X, y, epochs=10, batch_size=32, verbose=0, callbacks=[checkpoint])
+            self.is_trained = True
+            print(f"✅ {symbol}: LSTM обучена и сохранена в {model_path}")
         except Exception as e:
-            logging.critical(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {type(e).__name__}: {str(e)}")
-            logging.warning("⏳ Перезапуск цикла через 60 секунд...")
-            time.sleep(60)
+            print(f"⚠️ Ошибка обучения LSTM для {symbol}: {e}")
+            raise e
 
-@app.before_request
-def start_bot_once():
-    global _bot_started
-    if not _bot_started:
-        thread = threading.Thread(target=run_strategy, daemon=True)
-        thread.start()
-        logging.info("🚀 [СИСТЕМА] Фоновый торговый бот успешно запущен!")
-        _bot_started = True
+    def predict_next(self, df, symbol):
+        """Загружаем модель, если она есть — иначе возвращаем 50%"""
+        model_path = os.path.join(self.model_dir, f"{symbol}.keras")
 
-@app.route('/')
-def wake_up():
-    return "✅ Quantum Edge AI Bot is LIVE on 9 cryptos!", 200
+        if os.path.exists(model_path):
+            try:
+                self.model = load_model(model_path)
+                self.is_trained = True
+                print(f"🔄 {symbol}: Загружена сохранённая модель из {model_path}")
+            except Exception as e:
+                print(f"⚠️ {symbol}: Не удалось загрузить модель {model_path}: {e}")
+                self.is_trained = False
 
-@app.route('/health')
-def health_check():
-    return "OK", 200
+        if not self.is_trained:
+            print(f"⚠️ {symbol}: Модель ещё не обучена. Используется последнее состояние.")
+            return 0.5
 
-# ✅ КРИТИЧЕСКИЙ ШАГ — ЗАПУСКАЕМ FLASK НА ПОРТУ 10000
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    logging.info(f"🌐 Flask сервер запущен на порту {port}")
-    app.run(host='0.0.0.0', port=port)
+        try:
+            data = self.prepare_features(df)
+            last_sequence = data[-self.lookback:].reshape(1, self.lookback, 5)
+            prob = self.model.predict(last_sequence, verbose=0)[0][0]
+            return float(prob)
+        except Exception as e:
+            print(f"⚠️ Ошибка прогноза для {symbol}: {e}")
+            return 0.5
