@@ -1,11 +1,11 @@
-# trader.py — Quantum Edge AI Bot: BingXTrader (ФИНАЛЬНАЯ РАБОЧАЯ ВЕРСИЯ — 27.09.2025)
+# trader.py — Quantum Edge AI Bot: BingXTrader (ЦЕПОЧЕЧНЫЙ РЕЖИМ — ФИНАЛЬНАЯ ВЕРСИЯ)
 import ccxt
 import os
 import time
 import hashlib
 import hmac
 import requests
-import random  # ✅ ДЛЯ fetch_with_retry
+import random
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -78,6 +78,21 @@ class BingXTrader:
         except Exception as e:
             print(f"⚠️ Не удалось установить плечо для {self.symbol}: {e}")
 
+    def get_min_order_size(self):
+        """Получает минимальный размер ордера (minQty) для пары"""
+        try:
+            markets = self.exchange.fetch_markets()
+            for market in markets:
+                if market['symbol'] == self.symbol:
+                    min_qty = market['limits']['amount']['min']
+                    if min_qty is None:
+                        return 0.001
+                    return min_qty
+            return 0.001
+        except Exception as e:
+            print(f"⚠️ Не удалось получить minQty для {self.symbol}: {e}")
+            return 0.001
+
     def get_best_price(self, side):
         """Возвращает лучшую цену (bid/ask) с учётом направления позиции"""
         ticker = self.exchange.fetch_ticker(self.symbol)
@@ -85,6 +100,30 @@ class BingXTrader:
             return ticker['bid']
         else:
             return ticker['ask']
+
+    def fetch_with_retry(self, func, max_retries=3, delay=2, backoff=1.5):
+        """Умный retry для API-запросов BingX"""
+        base_urls = [
+            'https://open-api.bingx.com',
+            'https://open-api.bingx.io'
+        ]
+        
+        for attempt in range(max_retries):
+            for base_url in base_urls:
+                try:
+                    exchange = ccxt.bingx({
+                        'options': {'defaultType': 'swap', 'baseUrl': base_url},
+                        'enableRateLimit': True,
+                    })
+                    result = func(exchange)
+                    return result
+                except Exception as e:
+                    if attempt == max_retries - 1 and base_url == base_urls[-1]:
+                        raise Exception(f"❌ Все домены и попытки исчерпаны: {e}")
+                    wait_time = delay * (backoff ** attempt) + random.uniform(0, 1)
+                    print(f"⚠️ Ошибка при обращении к {base_url}: {e}. Повтор через {wait_time:.1f} сек. (попытка {attempt + 1}/{max_retries})")
+                    time.sleep(wait_time)
+                    break
 
     def place_order(self, side, amount, stop_loss_percent=1.5, take_profit_percent=3.0):
         """Отправляет рыночный ордер + стоп-лосс + тейк-профит"""
@@ -107,10 +146,12 @@ class BingXTrader:
             order_id = market_order.get('id', 'N/A')
             print(f"✅ Рыночный ордер исполнен: {order_id}")
 
-            # ✅ ИСПРАВЛЕНО: ИСПОЛЬЗУЕМ get_bars() ДЛЯ ПОЛУЧЕНИЯ ЦЕНЫ — ОН УЖЕ С RETRY
-            # Это гарантирует, что мы получаем данные, даже если сеть глючит
-            df = get_bars(self.symbol, '1h', 1)  # Берём 1 последнюю свечу
-            entry_price = df['close'].iloc[-1]  # ✅ НАДЕЖНО, БЕЗ ОШИБОК
+            # ✅ Получаем цену входа — с retry
+            def fetch_ticker_safe():
+                return self.exchange.fetch_ticker(self.symbol)
+            
+            ticker = self.fetch_with_retry(fetch_ticker_safe)
+            entry_price = ticker['last']
 
             # ✅ УЧЁТ КОМИССИИ — 0.075% (мейкер)
             commission_rate = 0.00075
@@ -126,7 +167,7 @@ class BingXTrader:
                 self.trailing_stop_price = entry_price * (1 + self.trailing_distance_percent / 100)
 
             # ✅ ДИНАМИЧЕСКИЙ TP — ПРИЛИПАНИЕ К ЛУЧШЕМУ БИДУ/АСКУ
-            buffer = 0.0005
+            buffer = 0.0005  # 0.05%
             if side == 'buy':
                 best_bid = self.get_best_price('buy')
                 self.take_profit_price = best_bid * (1 + buffer)
@@ -136,7 +177,7 @@ class BingXTrader:
 
             print(f"📊 Цена входа: {entry_price:.2f}")
             
-            # ✅ УСЛОВИЕ: ЕСЛИ stop_loss_percent == 0 — НЕ СТАВИМ СТОП-ЛАСС
+            # ✅ СТОП-ЛАСС — ЛИМИТНЫЙ, А НЕ РЫНОЧНЫЙ
             if stop_loss_percent > 0:
                 stop_limit_price = stop_loss_price * (1 - 0.0005)
                 self.exchange.create_order(
@@ -149,7 +190,7 @@ class BingXTrader:
                 )
                 print(f"⛔ Отправка стоп-лосса (stop_limit): {stop_loss_price:.2f} ({stop_loss_percent}%)")
 
-            # ✅ УСЛОВИЕ: ЕСЛИ take_profit_percent == 0 — НЕ СТАВИМ ТЕЙК-ПРОФИТ
+            # ✅ ТЕЙК-ПРОФИТ — ЛИМИТНЫЙ
             if take_profit_percent > 0:
                 self.exchange.create_order(
                     symbol=self.symbol,
@@ -195,9 +236,11 @@ class BingXTrader:
         if not self.position:
             return
 
-        # ✅ ИСПРАВЛЕНО: ИСПОЛЬЗУЕМ get_bars() — ОН УЖЕ С RETRY
-        df = get_bars(self.symbol, '1h', 1)
-        current_price = df['close'].iloc[-1]
+        # ✅ Получаем текущую цену — с retry
+        def fetch_ticker_safe():
+            return self.exchange.fetch_ticker(self.symbol)
+        
+        current_price = self.fetch_with_retry(fetch_ticker_safe)['last']
         side = self.position['side']
 
         # ✅ 1. ТРЕЙЛИНГ-СТОП
