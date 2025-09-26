@@ -1,4 +1,4 @@
-# trader.py — Quantum Edge AI Bot: BingXTrader (ЦЕПОЧЕЧНЫЙ РЕЖИМ — ФИНАЛЬНАЯ ВЕРСИЯ)
+# trader.py — Quantum Edge AI Bot: BingXTrader (ФИНАЛЬНАЯ РАБОЧАЯ ВЕРСИЯ)
 import ccxt
 import os
 import time
@@ -15,7 +15,8 @@ class BingXTrader:
         self.symbol = symbol
         self.use_demo = use_demo
         self.leverage = leverage
-        
+        self.trailing_distance_percent = 1.0
+
         # Инициализация биржи
         self.exchange = ccxt.bingx({
             'apiKey': os.getenv('BINGX_API_KEY'),
@@ -23,18 +24,14 @@ class BingXTrader:
             'options': {'defaultType': 'swap'},
             'enableRateLimit': True,
         })
-        
+
         if use_demo:
             self.exchange.set_sandbox_mode(True)
-
-        # Устанавливаем плечо через ручной запрос — опционально
-        # self._set_leverage(leverage)
 
         # Хранение позиции для трейлинга и динамического TP
         self.position = None
         self.trailing_stop_price = None
         self.take_profit_price = None
-        self.trailing_distance_percent = 1.0
 
     def _set_leverage(self, leverage):
         """Устанавливает плечо через прямой POST-запрос к BingX (swap)"""
@@ -70,13 +67,13 @@ class BingXTrader:
             result = response.json()
 
             if result.get('code') == 0:
-                print(f"✅ {self.symbol}: Плечо установлено на {leverage}x")
+                logging.info(f"✅ {self.symbol}: Плечо установлено на {leverage}x")
             else:
                 msg = result.get('msg', 'unknown error')
-                print(f"❌ Ошибка установки плеча: {msg}")
+                logging.warning(f"❌ Ошибка установки плеча: {msg}")
 
         except Exception as e:
-            print(f"⚠️ Не удалось установить плечо для {self.symbol}: {e}")
+            logging.warning(f"⚠️ Не удалось установить плечо для {self.symbol}: {e}")
 
     def get_min_order_size(self):
         """Получает минимальный размер ордера (minQty) для пары"""
@@ -90,7 +87,7 @@ class BingXTrader:
                     return min_qty
             return 0.001
         except Exception as e:
-            print(f"⚠️ Не удалось получить minQty для {self.symbol}: {e}")
+            logging.warning(f"⚠️ Не удалось получить minQty для {self.symbol}: {e}")
             return 0.001
 
     def get_best_price(self, side):
@@ -102,26 +99,31 @@ class BingXTrader:
             return ticker['ask']
 
     def fetch_with_retry(self, func, max_retries=3, delay=2, backoff=1.5):
-        """Умный retry для API-запросов BingX"""
+        """Умный retry для API-запросов BingX — с автоматической сменой базового URL"""
         base_urls = [
             'https://open-api.bingx.com',
             'https://open-api.bingx.io'
         ]
-        
+
         for attempt in range(max_retries):
             for base_url in base_urls:
                 try:
-                    exchange = ccxt.bingx({
+                    # Создаем новый exchange с нужным baseUrl
+                    new_exchange = ccxt.bingx({
+                        'apiKey': os.getenv('BINGX_API_KEY'),
+                        'secret': os.getenv('BINGX_SECRET_KEY'),
                         'options': {'defaultType': 'swap', 'baseUrl': base_url},
                         'enableRateLimit': True,
                     })
-                    result = func(exchange)
+                    result = func(new_exchange)
+                    # ✅ УСПЕХ — обновляем основной exchange!
+                    self.exchange = new_exchange
                     return result
                 except Exception as e:
                     if attempt == max_retries - 1 and base_url == base_urls[-1]:
                         raise Exception(f"❌ Все домены и попытки исчерпаны: {e}")
                     wait_time = delay * (backoff ** attempt) + random.uniform(0, 1)
-                    print(f"⚠️ Ошибка при обращении к {base_url}: {e}. Повтор через {wait_time:.1f} сек. (попытка {attempt + 1}/{max_retries})")
+                    logging.warning(f"⚠️ Ошибка при обращении к {base_url}: {e}. Повтор через {wait_time:.1f} сек. (попытка {attempt + 1}/{max_retries})")
                     time.sleep(wait_time)
                     break
 
@@ -133,10 +135,10 @@ class BingXTrader:
             for m in markets:
                 if m['symbol'] == self.symbol:
                     if m['info'].get('status') != 'TRADING':
-                        print(f"🚫 {self.symbol} — торговля заблокирована. Пропускаем.")
+                        logging.error(f"🚫 {self.symbol} — торговля заблокирована. Пропускаем.")
                         return None
 
-            print(f"📤 Отправка рыночного ордера: {side} {amount}")
+            logging.info(f"📤 Отправка рыночного ордера: {side} {amount}")
             market_order = self.exchange.create_order(
                 symbol=self.symbol,
                 type='market',
@@ -144,12 +146,12 @@ class BingXTrader:
                 amount=amount
             )
             order_id = market_order.get('id', 'N/A')
-            print(f"✅ Рыночный ордер исполнен: {order_id}")
+            logging.info(f"✅ Рыночный ордер исполнен: {order_id}")
 
             # ✅ Получаем цену входа — с retry
-            def fetch_ticker_safe():
-                return self.exchange.fetch_ticker(self.symbol)
-            
+            def fetch_ticker_safe(exchange):
+                return exchange.fetch_ticker(self.symbol)
+
             ticker = self.fetch_with_retry(fetch_ticker_safe)
             entry_price = ticker['last']
 
@@ -175,8 +177,8 @@ class BingXTrader:
                 best_ask = self.get_best_price('sell')
                 self.take_profit_price = best_ask * (1 - buffer)
 
-            print(f"📊 Цена входа: {entry_price:.2f}")
-            
+            logging.info(f"📊 Цена входа: {entry_price:.2f}")
+
             # ✅ СТОП-ЛАСС — ЛИМИТНЫЙ, А НЕ РЫНОЧНЫЙ
             if stop_loss_percent > 0:
                 stop_limit_price = stop_loss_price * (1 - 0.0005)
@@ -188,7 +190,7 @@ class BingXTrader:
                     price=stop_limit_price,
                     params={'stopPrice': stop_loss_price, 'reduceOnly': True}
                 )
-                print(f"⛔ Отправка стоп-лосса (stop_limit): {stop_loss_price:.2f} ({stop_loss_percent}%)")
+                logging.info(f"⛔ Отправка стоп-лосса (stop_limit): {stop_loss_price:.2f} ({stop_loss_percent}%)")
 
             # ✅ ТЕЙК-ПРОФИТ — ЛИМИТНЫЙ
             if take_profit_percent > 0:
@@ -200,7 +202,7 @@ class BingXTrader:
                     price=self.take_profit_price,
                     params={'reduceOnly': True}
                 )
-                print(f"🎯 Отправка тейк-профита (limit): {self.take_profit_price:.2f} ({take_profit_percent}% + комиссия)")
+                logging.info(f"🎯 Отправка тейк-профита (limit): {self.take_profit_price:.2f} ({take_profit_percent}% + комиссия)")
 
             # Сохраняем позицию
             self.position = {
@@ -210,25 +212,25 @@ class BingXTrader:
                 'last_trailing_price': entry_price
             }
 
-            print(f"✅ УСПЕХ! Ордер {side} на {self.symbol} отправлен.")
+            logging.info(f"✅ УСПЕХ! Ордер {side} на {self.symbol} отправлен.")
             return market_order
 
         except Exception as e:
             error_str = str(e)
             if "position not exist" in error_str:
-                print(f"❌ {self.symbol}: Позиция не найдена — возможно, ордер не исполнился.")
+                logging.error(f"❌ {self.symbol}: Позиция не найдена — возможно, ордер не исполнился.")
             elif "Invalid order quantity" in error_str:
-                print(f"❌ {self.symbol}: Неверный размер ордера. Проверь лимиты.")
+                logging.error(f"❌ {self.symbol}: Неверный размер ордера. Проверь лимиты.")
             elif "101415" in error_str:
-                print(f"🚫 {self.symbol}: Торговля временно заблокирована. Ждём...")
+                logging.error(f"🚫 {self.symbol}: Торговля временно заблокирована. Ждём...")
             elif "101212" in error_str:
-                print(f"⚠️ {self.symbol}: Есть отложенные ордера — отмени их вручную.")
+                logging.warning(f"⚠️ {self.symbol}: Есть отложенные ордера — отмени их вручную.")
             elif "Invalid order type" in error_str:
-                print(f"❌ {self.symbol}: Неверный тип ордера. Используй 'stop_limit' и 'limit'.")
+                logging.error(f"❌ {self.symbol}: Неверный тип ордера. Используй 'stop_limit' и 'limit'.")
             elif "reduceOnly" in error_str:
-                print(f"⚠️ {self.symbol}: reduceOnly требует существующей позиции — проверь, что ордер исполнен.")
+                logging.warning(f"⚠️ {self.symbol}: reduceOnly требует существующей позиции — проверь, что ордер исполнен.")
             else:
-                print(f"❌ Полная ошибка API {self.symbol}: {type(e).__name__}: {error_str}")
+                logging.critical(f"❌ Полная ошибка API {self.symbol}: {type(e).__name__}: {error_str}")
             return None
 
     def update_trailing_stop(self):
@@ -237,9 +239,9 @@ class BingXTrader:
             return
 
         # ✅ Получаем текущую цену — с retry
-        def fetch_ticker_safe():
-            return self.exchange.fetch_ticker(self.symbol)
-        
+        def fetch_ticker_safe(exchange):
+            return exchange.fetch_ticker(self.symbol)
+
         current_price = self.fetch_with_retry(fetch_ticker_safe)['last']
         side = self.position['side']
 
@@ -249,12 +251,12 @@ class BingXTrader:
             new_trailing_price = current_price * (1 - self.trailing_distance_percent / 100)
             if new_trailing_price > self.trailing_stop_price:
                 self.trailing_stop_price = new_trailing_price
-                print(f"📈 {self.symbol}: Трейлинг-стоп обновлён до {self.trailing_stop_price:.2f}")
+                logging.info(f"📈 {self.symbol}: Трейлинг-стоп обновлён до {self.trailing_stop_price:.2f}")
         else:
             new_trailing_price = current_price * (1 + self.trailing_distance_percent / 100)
             if new_trailing_price < self.trailing_stop_price:
                 self.trailing_stop_price = new_trailing_price
-                print(f"📉 {self.symbol}: Трейлинг-стоп обновлён до {self.trailing_stop_price:.2f}")
+                logging.info(f"📉 {self.symbol}: Трейлинг-стоп обновлён до {self.trailing_stop_price:.2f}")
 
         # ✅ 2. ДИНАМИЧЕСКИЙ ТЕЙК-ПРОФИТ — ОБНОВЛЕНИЕ КАЖДЫЕ 5 МИН
         if side == 'buy':
@@ -262,7 +264,7 @@ class BingXTrader:
             new_tp_price = best_bid * (1 + 0.0005)
             if new_tp_price > self.take_profit_price:
                 self.take_profit_price = new_tp_price
-                print(f"🎯 {self.symbol}: Тейк-профит обновлён до {new_tp_price:.2f} (лучший bid: {best_bid:.2f})")
+                logging.info(f"🎯 {self.symbol}: Тейк-профит обновлён до {new_tp_price:.2f} (лучший bid: {best_bid:.2f})")
                 self._cancel_take_profit()
                 self._place_take_profit()
         else:
@@ -270,7 +272,7 @@ class BingXTrader:
             new_tp_price = best_ask * (1 - 0.0005)
             if new_tp_price < self.take_profit_price:
                 self.take_profit_price = new_tp_price
-                print(f"🎯 {self.symbol}: Тейк-профит обновлён до {new_tp_price:.2f} (лучший ask: {best_ask:.2f})")
+                logging.info(f"🎯 {self.symbol}: Тейк-профит обновлён до {new_tp_price:.2f} (лучший ask: {best_ask:.2f})")
                 self._cancel_take_profit()
                 self._place_take_profit()
 
@@ -283,9 +285,9 @@ class BingXTrader:
             for order in orders:
                 if order['type'] == 'limit' and order['reduceOnly']:
                     self.exchange.cancel_order(order['id'], symbol=self.symbol)
-                    print(f"🗑️ {self.symbol}: Отменён старый тейк-профит #{order['id']}")
+                    logging.info(f"🗑️ {self.symbol}: Отменён старый тейк-профит #{order['id']}")
         except Exception as e:
-            print(f"⚠️ {self.symbol}: Не удалось отменить тейк-профит: {e}")
+            logging.warning(f"⚠️ {self.symbol}: Не удалось отменить тейк-профит: {e}")
 
     def _place_take_profit(self):
         """Ставит новый тейк-профит"""
@@ -302,6 +304,6 @@ class BingXTrader:
                 price=self.take_profit_price,
                 params={'reduceOnly': True}
             )
-            print(f"🎯 {self.symbol}: Новый тейк-профит по {self.take_profit_price:.2f} установлен")
+            logging.info(f"🎯 {self.symbol}: Новый тейк-профит по {self.take_profit_price:.2f} установлен")
         except Exception as e:
-            print(f"⚠️ {self.symbol}: Не удалось поставить тейк-профит: {e}")
+            logging.warning(f"⚠️ {self.symbol}: Не удалось поставить тейк-профит: {e}")
