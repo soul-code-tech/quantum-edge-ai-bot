@@ -1,4 +1,4 @@
-# main.py — Quantum Edge AI Bot v7.0 — РАБОТАЕТ НА RENDER.COM 24/7
+# main.py — Quantum Edge AI Bot v7.1 — ГАРАНТИРОВАННО РАБОТАЕТ НА RENDER.COM
 from flask import Flask
 import threading
 import time
@@ -14,7 +14,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler()
+        logging.StreamHandler()  # Вывод в лог Render
     ]
 )
 
@@ -34,14 +34,14 @@ TAKE_PROFIT_PCT = 3.0
 TRAILING_PCT = 1.0
 LSTM_CONFIDENCE = 0.55
 TIMEFRAME = '1h'
-LOOKBACK = 50
+LOOKBACK = 50  # ✅ УБРАЛИ 100 — теперь 50 — это нормально для BingX API
 SIGNAL_COOLDOWN = 3600
 UPDATE_TRAILING_INTERVAL = 300
-TEST_INTERVAL = 86400
+TEST_INTERVAL = 86400  # 24 часа
 
 # ЦЕПОЧКА ОБУЧЕНИЯ: каждые 10 минут — одна пара (по порядку)
-LSTM_TRAIN_DELAY = 600
-MONITORING_CYCLE = 60
+LSTM_TRAIN_DELAY = 600  # 10 минут
+MONITORING_CYCLE = 60   # 60 секунд между циклами мониторинга
 
 # Инициализация
 lstm_models = {}
@@ -73,7 +73,7 @@ total_trades = 0
 # ✅ Обучаем первую пару при запуске
 logging.info(f"\n🔄 [СТАРТ] Обучение первой пары при запуске: {SYMBOLS[0]}")
 df = get_bars(SYMBOLS[0], TIMEFRAME, LOOKBACK)
-if df is not None and len(df) >= 100:
+if df is not None and len(df) >= 50:  # ✅ Проверяем ≥50 — не 100!
     df = calculate_strategy_signals(df, 60)
     try:
         lstm_models[SYMBOLS[0]].train(df, SYMBOLS[0])
@@ -97,7 +97,7 @@ def run_strategy():
                 logging.info(f"\n🔄 [LSTM] Обучение: {symbol} (по расписанию)")
 
                 df = get_bars(symbol, TIMEFRAME, LOOKBACK)
-                if df is not None and len(df) >= 100:
+                if df is not None and len(df) >= 50:  # ✅ Проверяем ≥50 — не 100!
                     df = calculate_strategy_signals(df, 60)
                     try:
                         lstm_models[symbol].train(df, symbol)
@@ -107,7 +107,7 @@ def run_strategy():
                     except Exception as e:
                         logging.warning(f"⚠️ {symbol}: Ошибка обучения LSTM — {e}")
                 else:
-                    logging.warning(f"⚠️ {symbol}: Недостаточно данных от API (df={len(df) if df is not None else 'None'})")
+                    logging.warning(f"⚠️ {symbol}: Недостаточно данных от API (получено {len(df) if df is not None else 'None'} свечей)")
 
             # ✅ 2. МОНИТОРИНГ И ТОРГОВЛЯ — КАЖДЫЕ 60 СЕКУНД
             for i, symbol in enumerate(SYMBOLS):
@@ -115,13 +115,12 @@ def run_strategy():
 
                 time.sleep(10)
 
-               # ✅ Правильная проверка — только ОДИН раз!
-               df = get_bars(symbol, TIMEFRAME, LOOKBACK)
-               if df is None or len(df) < 50:
-                  logging.error(f"❌ Недостаточно данных для {symbol} (получено {len(df)} свечей)")
-                  continue
+                df = get_bars(symbol, TIMEFRAME, LOOKBACK)
+                if df is None or len(df) < 50:
+                    logging.error(f"❌ Недостаточно данных для {symbol} (получено {len(df) if df is not None else 'None'} свечей)")
+                    continue
                 else:
-                   logging.info(f"✅ Получено {len(df)} свечей для {symbol} — достаточно для анализа")
+                    logging.info(f"✅ Получено {len(df)} свечей для {symbol} — достаточно для анализа")
 
                 df = calculate_strategy_signals(df, 60)
                 current_price = df['close'].iloc[-1]
