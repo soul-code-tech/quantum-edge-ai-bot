@@ -28,7 +28,7 @@ def fetch_with_retry(func, max_retries=3, delay=2, backoff=1.5):
                 time.sleep(wait_time)
                 break
 
-def get_bars(symbol='BTC-USDT', timeframe='1h', limit=100):
+def get_bars(symbol='BTC-USDT', timeframe='1h', limit=50):
     """Получает OHLCV-данные с биржи с защитой от сбоев"""
     def fetch_ohlcv(exchange):
         return exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
