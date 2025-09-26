@@ -36,7 +36,7 @@ class LSTMPredictor:
         self.model = model
 
     def train(self, df):
-        """Обучаем LSTM один раз в час"""
+        """Обучаем LSTM один раз в цикле"""
         try:
             data = self.prepare_features(df)
             X, y = self.create_sequences(data)
@@ -55,7 +55,7 @@ class LSTMPredictor:
         """Только предсказание — без обучения"""
         if not self.is_trained:
             print("⚠️ Модель ещё не обучена. Используется последнее состояние.")
-            return 0.5  # нейтрально
+            return 0.5
 
         try:
             data = self.prepare_features(df)
