@@ -1,4 +1,4 @@
-# trader.py — Quantum Edge AI Bot: BingXTrader (ФИНАЛЬНАЯ РАБОЧАЯ ВЕРСИЯ)
+# trader.py — Quantum Edge AI Bot: BingXTrader — ФИНАЛЬНАЯ РАБОЧАЯ ВЕРСИЯ
 import ccxt
 import os
 import time
@@ -28,16 +28,15 @@ class BingXTrader:
         if use_demo:
             self.exchange.set_sandbox_mode(True)
 
-        # Хранение позиции для трейлинга и динамического TP
+        # Хранение позиции
         self.position = None
         self.trailing_stop_price = None
         self.take_profit_price = None
 
     def _set_leverage(self, leverage):
-        """Устанавливает плечо через прямой POST-запрос к BingX (swap)"""
         try:
             timestamp = int(time.time() * 1000)
-            symbol_for_api = self.symbol.replace('-', '')  # BTCUSDT
+            symbol_for_api = self.symbol.replace('-', '')
             api_key = os.getenv('BINGX_API_KEY')
             secret_key = os.getenv('BINGX_SECRET_KEY')
 
@@ -76,7 +75,6 @@ class BingXTrader:
             logging.warning(f"⚠️ Не удалось установить плечо для {self.symbol}: {e}")
 
     def get_min_order_size(self):
-        """Получает минимальный размер ордера (minQty) для пары"""
         try:
             markets = self.exchange.fetch_markets()
             for market in markets:
@@ -91,7 +89,6 @@ class BingXTrader:
             return 0.001
 
     def get_best_price(self, side):
-        """Возвращает лучшую цену (bid/ask) с учётом направления позиции"""
         ticker = self.exchange.fetch_ticker(self.symbol)
         if side == 'buy':
             return ticker['bid']
@@ -99,7 +96,6 @@ class BingXTrader:
             return ticker['ask']
 
     def fetch_with_retry(self, func, max_retries=3, delay=2, backoff=1.5):
-        """Умный retry для API-запросов BingX — с автоматической сменой базового URL"""
         base_urls = [
             'https://open-api.bingx.com',
             'https://open-api.bingx.io'
@@ -108,7 +104,6 @@ class BingXTrader:
         for attempt in range(max_retries):
             for base_url in base_urls:
                 try:
-                    # Создаем новый exchange с нужным baseUrl
                     new_exchange = ccxt.bingx({
                         'apiKey': os.getenv('BINGX_API_KEY'),
                         'secret': os.getenv('BINGX_SECRET_KEY'),
@@ -116,7 +111,6 @@ class BingXTrader:
                         'enableRateLimit': True,
                     })
                     result = func(new_exchange)
-                    # ✅ УСПЕХ — обновляем основной exchange!
                     self.exchange = new_exchange
                     return result
                 except Exception as e:
@@ -128,9 +122,7 @@ class BingXTrader:
                     break
 
     def place_order(self, side, amount, stop_loss_percent=1.5, take_profit_percent=3.0):
-        """Отправляет рыночный ордер + стоп-лосс + тейк-профит"""
         try:
-            # Проверка статуса пары
             markets = self.exchange.fetch_markets()
             for m in markets:
                 if m['symbol'] == self.symbol:
@@ -148,17 +140,14 @@ class BingXTrader:
             order_id = market_order.get('id', 'N/A')
             logging.info(f"✅ Рыночный ордер исполнен: {order_id}")
 
-            # ✅ Получаем цену входа — с retry
             def fetch_ticker_safe(exchange):
                 return exchange.fetch_ticker(self.symbol)
 
             ticker = self.fetch_with_retry(fetch_ticker_safe)
             entry_price = ticker['last']
 
-            # ✅ УЧЁТ КОМИССИИ — 0.075% (мейкер)
             commission_rate = 0.00075
 
-            # Рассчитываем TP/SL с учётом комиссии
             if side == 'buy':
                 stop_loss_price = entry_price * (1 - stop_loss_percent / 100)
                 take_profit_price = entry_price * (1 + (take_profit_percent / 100) + commission_rate)
@@ -168,8 +157,7 @@ class BingXTrader:
                 take_profit_price = entry_price * (1 - (take_profit_percent / 100) - commission_rate)
                 self.trailing_stop_price = entry_price * (1 + self.trailing_distance_percent / 100)
 
-            # ✅ ДИНАМИЧЕСКИЙ TP — ПРИЛИПАНИЕ К ЛУЧШЕМУ БИДУ/АСКУ
-            buffer = 0.0005  # 0.05%
+            buffer = 0.0005
             if side == 'buy':
                 best_bid = self.get_best_price('buy')
                 self.take_profit_price = best_bid * (1 + buffer)
@@ -179,7 +167,6 @@ class BingXTrader:
 
             logging.info(f"📊 Цена входа: {entry_price:.2f}")
 
-            # ✅ СТОП-ЛАСС — ЛИМИТНЫЙ, А НЕ РЫНОЧНЫЙ
             if stop_loss_percent > 0:
                 stop_limit_price = stop_loss_price * (1 - 0.0005)
                 self.exchange.create_order(
@@ -192,7 +179,6 @@ class BingXTrader:
                 )
                 logging.info(f"⛔ Отправка стоп-лосса (stop_limit): {stop_loss_price:.2f} ({stop_loss_percent}%)")
 
-            # ✅ ТЕЙК-ПРОФИТ — ЛИМИТНЫЙ
             if take_profit_percent > 0:
                 self.exchange.create_order(
                     symbol=self.symbol,
@@ -204,7 +190,6 @@ class BingXTrader:
                 )
                 logging.info(f"🎯 Отправка тейк-профита (limit): {self.take_profit_price:.2f} ({take_profit_percent}% + комиссия)")
 
-            # Сохраняем позицию
             self.position = {
                 'side': side,
                 'entry_price': entry_price,
@@ -234,18 +219,15 @@ class BingXTrader:
             return None
 
     def update_trailing_stop(self):
-        """Обновляет трейлинг-стоп и динамический тейк-профит"""
         if not self.position:
             return
 
-        # ✅ Получаем текущую цену — с retry
         def fetch_ticker_safe(exchange):
             return exchange.fetch_ticker(self.symbol)
 
         current_price = self.fetch_with_retry(fetch_ticker_safe)['last']
         side = self.position['side']
 
-        # ✅ 1. ТРЕЙЛИНГ-СТОП
         new_trailing_price = None
         if side == 'buy':
             new_trailing_price = current_price * (1 - self.trailing_distance_percent / 100)
@@ -258,7 +240,6 @@ class BingXTrader:
                 self.trailing_stop_price = new_trailing_price
                 logging.info(f"📉 {self.symbol}: Трейлинг-стоп обновлён до {self.trailing_stop_price:.2f}")
 
-        # ✅ 2. ДИНАМИЧЕСКИЙ ТЕЙК-ПРОФИТ — ОБНОВЛЕНИЕ КАЖДЫЕ 5 МИН
         if side == 'buy':
             best_bid = self.get_best_price('buy')
             new_tp_price = best_bid * (1 + 0.0005)
@@ -279,7 +260,6 @@ class BingXTrader:
         self.position['last_trailing_price'] = current_price
 
     def _cancel_take_profit(self):
-        """Отменяет предыдущий тейк-профит (если есть)"""
         try:
             orders = self.exchange.fetch_open_orders(symbol=self.symbol)
             for order in orders:
@@ -290,7 +270,6 @@ class BingXTrader:
             logging.warning(f"⚠️ {self.symbol}: Не удалось отменить тейк-профит: {e}")
 
     def _place_take_profit(self):
-        """Ставит новый тейк-профит"""
         if not self.position:
             return
         side = self.position['side']
