@@ -1,6 +1,4 @@
-# main.py — Quantum Edge AI Bot v3.5 (Render-Optimized — ФИНАЛЬНАЯ ВЕРСИЯ)
-# Вариант B: НЕ обучаем LSTM каждый цикл
-# Вариант C: Обучение раз в час, с разбегом по парам → УЛУЧШЕНО: раз в 40 минут, по одной паре
+# main.py — Quantum Edge AI Bot v3.7 (Render-Optimized — ФИНАЛЬНАЯ ВЕРСИЯ)
 from flask import Flask
 import threading
 import time
@@ -13,13 +11,11 @@ from lstm_model import LSTMPredictor
 app = Flask(__name__)
 _bot_started = False
 
-# 9 пар — меньше нагрузки, больше диверсификации
 SYMBOLS = [
     'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT',
     'DOGE-USDT', 'AVAX-USDT', 'PENGU-USDT', 'SHIB-USDT', 'LINK-USDT'
 ]
 
-# Параметры
 RISK_PERCENT = 1.0
 STOP_LOSS_PCT = 1.5
 TAKE_PROFIT_PCT = 3.0
@@ -29,10 +25,9 @@ TIMEFRAME = '1h'
 LOOKBACK = 200
 SIGNAL_COOLDOWN = 3600
 UPDATE_TRAILING_INTERVAL = 300
-TEST_INTERVAL = 86400  # ✅ 24 часа в секундах
-LSTM_TRAIN_INTERVAL = 2400  # ✅ 40 минут — идеально для Render Free
+TEST_INTERVAL = 86400
+LSTM_TRAIN_INTERVAL = 2400  # 40 минут
 
-# Инициализация
 lstm_models = {}
 traders = {}
 
@@ -50,29 +45,27 @@ print(f"⏳ Кулдаун: {SIGNAL_COOLDOWN} сек. на пару")
 print(f"🔄 LSTM обучение: каждые {LSTM_TRAIN_INTERVAL//60} минут (по одной паре)")
 print(f"🎯 Тестовый ордер: раз в {TEST_INTERVAL//3600} часов")
 
-# Глобальные переменные
 last_signal_time = {}
 last_trailing_update = {}
 last_test_order = 0
 last_lstm_train_time = 0
-last_lstm_next_symbol_index = 0  # ✅ Новый индекс для поочерёдного обучения
+last_lstm_next_symbol_index = 0
 total_trades = 0
 
-# ✅ НОВОЕ: ПРИ ЗАПУСКЕ — ОБУЧАЕМ ВСЕ 9 ПАР ПОСЛЕДОВАТЕЛЬНО
-print("\n🔄 [СТАРТ] Обучение всех 9 пар при запуске...")
-for symbol in SYMBOLS:
-    print(f"🔄 Обучение: {symbol}...")
-    df = get_bars(symbol, TIMEFRAME, LOOKBACK)
-    if df is not None and len(df) >= 100:
-        df = calculate_strategy_signals(df, 60)
-        try:
-            lstm_models[symbol].train(df)
-            print(f"✅ {symbol}: LSTM переобучена!")
-        except Exception as e:
-            print(f"⚠️ {symbol}: Ошибка обучения LSTM — {e}")
-    else:
-        print(f"⚠️ {symbol}: Недостаточно данных для обучения")
-print("✅ Все пары обучены при запуске.\n")
+# ✅ ИСПРАВЛЕНО: ПРИ ЗАПУСКЕ — ОБУЧАЕМ ТОЛЬКО ПЕРВУЮ ПАРУ
+first_symbol = SYMBOLS[0]
+print(f"\n🔄 [СТАРТ] Обучение первой пары при запуске: {first_symbol}")
+df = get_bars(first_symbol, TIMEFRAME, LOOKBACK)
+if df is not None and len(df) >= 100:
+    df = calculate_strategy_signals(df, 60)
+    try:
+        lstm_models[first_symbol].train(df)
+        print(f"✅ {first_symbol}: LSTM переобучена!")
+    except Exception as e:
+        print(f"⚠️ {first_symbol}: Ошибка обучения LSTM — {e}")
+else:
+    print(f"⚠️ {first_symbol}: Недостаточно данных для обучения (df={len(df) if df is not None else 'None'})")
+print("✅ Первая пара обучена при запуске. Остальные — по расписанию.\n")
 
 def run_strategy():
     global last_signal_time, last_trailing_update, last_test_order, total_trades, last_lstm_train_time, last_lstm_next_symbol_index
@@ -205,5 +198,5 @@ def health_check():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     print(f"🌐 Flask сервер запущен на порту {port}")
-    time.sleep(5)  # ✅ КРИТИЧЕСКИЙ ДОБАВЛЕННЫЙ СЛЕДУЮЩИЙ ШАГ — ДАЁМ RENDER ВРЕМЯ УВИДЕТЬ ПОРТ
+    time.sleep(10)  # ✅ КРИТИЧЕСКИЙ ШАГ — ДАЁМ RENDER 10 СЕКУНД УВИДЕТЬ ПОРТ
     app.run(host='0.0.0.0', port=port)
