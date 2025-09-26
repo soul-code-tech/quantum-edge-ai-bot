@@ -115,10 +115,13 @@ def run_strategy():
 
                 time.sleep(10)
 
-                df = get_bars(symbol, TIMEFRAME, LOOKBACK)
-                if df is None or len(df) < 50:
-                     logging.error(f"❌ Недостаточно данных для {symbol} (получено {len(df)} свечей)")
-                      continue
+               # ✅ Правильная проверка — только ОДИН раз!
+               df = get_bars(symbol, TIMEFRAME, LOOKBACK)
+               if df is None or len(df) < 50:
+                  logging.error(f"❌ Недостаточно данных для {symbol} (получено {len(df)} свечей)")
+                  continue
+                else:
+                   logging.info(f"✅ Получено {len(df)} свечей для {symbol} — достаточно для анализа")
 
                 df = calculate_strategy_signals(df, 60)
                 current_price = df['close'].iloc[-1]
