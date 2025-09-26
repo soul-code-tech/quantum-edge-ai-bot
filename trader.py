@@ -1,10 +1,11 @@
-# trader.py — Quantum Edge AI Bot: BingXTrader (ФИНАЛЬНАЯ РАБОЧАЯ ВЕРСИЯ — 26.09.2025)
+# trader.py — Quantum Edge AI Bot: BingXTrader (ФИНАЛЬНАЯ РАБОЧАЯ ВЕРСИЯ — 27.09.2025)
 import ccxt
 import os
 import time
 import hashlib
 import hmac
 import requests
+import random  # ✅ ОБЯЗАТЕЛЬНО: для fetch_with_retry
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -27,7 +28,7 @@ class BingXTrader:
             self.exchange.set_sandbox_mode(True)
 
         # Устанавливаем плечо через ручной запрос — опционально (если нужно)
-        # self._set_leverage(leverage)  # ← ЗАКОММЕНТИРОВАНО — не обязательно, если плечо установлено вручную
+        # self._set_leverage(leverage)  # ← ЗАКОММЕНТИРОВАНО — не обязательно
 
         # Хранение позиции для трейлинга и динамического TP
         self.position = None
@@ -67,7 +68,7 @@ class BingXTrader:
                 'Content-Type': 'application/json'
             }
 
-            # ✅ ПРАВИЛЬНЫЙ URL — ИЗ ДОКУМЕНТАЦИИ BingX Swap
+            # ✅ ПРАВИЛЬНЫЙ URL — УБРАЛ ЛИШНИЕ ПРОБЕЛЫ
             url = 'https://open-api.bingx.com/openApi/swap/v2/trade/leverage'
 
             response = requests.post(url, json=payload, headers=headers)
