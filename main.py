@@ -12,8 +12,8 @@ app = Flask(__name__)
 _bot_started = False
 
 SYMBOLS = [
-    'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT',
-    'DOGE-USDT', 'AVAX-USDT', 'PENGU-USDT', 'SHIB-USDT', 'LINK-USDT'
+    'SOL-USDT', 'BNB-USDT', 'AVAX-USDT', 'BTC-USDT', 'ETH-USDT', 
+    'DOGE-USDT', 'PENGU-USDT', 'SHIB-USDT', 'LINK-USDT'
 ]
 
 RISK_PERCENT = 1.0
