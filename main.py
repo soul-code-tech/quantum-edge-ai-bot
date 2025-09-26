@@ -1,4 +1,4 @@
-# main.py — Quantum Edge AI Bot v5.1 (ФИНАЛЬНАЯ РАБОЧАЯ ВЕРСИЯ)
+# main.py — Quantum Edge AI Bot v5.2 — ФИНАЛЬНАЯ РАБОЧАЯ ВЕРСИЯ (Render совместима)
 from flask import Flask
 import threading
 import time
@@ -32,7 +32,7 @@ RISK_PERCENT = 1.0
 STOP_LOSS_PCT = 1.5
 TAKE_PROFIT_PCT = 3.0
 TRAILING_PCT = 1.0
-LSTM_CONFIDENCE = 0.55  # ✅ Снижено до 55% — выше шансов на сделку
+LSTM_CONFIDENCE = 0.55
 TIMEFRAME = '1h'
 LOOKBACK = 200
 SIGNAL_COOLDOWN = 3600
@@ -93,7 +93,7 @@ def run_strategy():
         try:
             current_time = time.time()
 
-            # ✅ 1. ОБУЧЕНИЕ — ПО ЦЕПОЧКЕ: ЖДЕМ 10 МИНУТ ПОСЛЕ СИГНАЛА
+            # ✅ 1. ОБУЧЕНИЕ — ПО ЦЕПОЧКЕ
             if last_signal_sent and current_time - last_lstm_train_time >= LSTM_TRAIN_DELAY:
                 symbol = SYMBOLS[last_lstm_next_symbol_index]
                 logging.info(f"\n🔄 [LSTM] Обучение: {symbol} (после сигнала от {SYMBOLS[(last_lstm_next_symbol_index - 1) % len(SYMBOLS)]})")
@@ -114,11 +114,11 @@ def run_strategy():
                     logging.warning(f"⚠️ {symbol}: Недостаточно данных для обучения (df={len(df) if df is not None else 'None'})")
                     last_signal_sent = False
 
-            # ✅ 2. МОНИТОРИНГ И ТОРГОВЛЯ — КАЖДЫЕ 60 СЕКУНД
+            # ✅ 2. МОНИТОРИНГ И ТОРГОВЛЯ
             for i, symbol in enumerate(SYMBOLS):
                 logging.info(f"\n--- [{time.strftime('%H:%M:%S')}] {symbol} ---")
 
-                time.sleep(10)  # Разбиваем цикл на 90 сек — укладываемся в 10 минут
+                time.sleep(10)
 
                 df = get_bars(symbol, TIMEFRAME, LOOKBACK)
                 if df is None or len(df) < 100:
@@ -178,14 +178,14 @@ def run_strategy():
                         score = long_score if buy_signal else short_score
                         logging.warning(f"⚠️ {symbol}: Сигнал есть, но не достаточно сильный (score={score}) или LSTM не уверен ({lstm_prob:.2%}) — пропускаем.")
 
-            # ✅ 3. Обновление трейлинг-стопов — каждые 5 минут
+            # ✅ 3. Обновление трейлинг-стопов
             if current_time - last_trailing_update.get('global', 0) > UPDATE_TRAILING_INTERVAL:
                 logging.info("\n🔄 Обновление трейлинг-стопов для всех пар...")
                 for symbol in SYMBOLS:
                     traders[symbol].update_trailing_stop()
                 last_trailing_update['global'] = current_time
 
-            # ✅ 4. ТЕСТОВЫЙ ОРДЕР — ТОЛЬКО РЫНОЧНЫЙ, БЕЗ TP/SL
+            # ✅ 4. ТЕСТОВЫЙ ОРДЕР
             if current_time - last_test_order > TEST_INTERVAL:
                 test_symbol = SYMBOLS[0]
                 logging.info(f"\n🎯 [ТЕСТ] ПРОВЕРКА СВЯЗИ: Принудительный MARKET BUY на {test_symbol} (раз в 24 часа)")
@@ -223,5 +223,5 @@ def wake_up():
 def health_check():
     return "OK", 200
 
-# ✅ ВАЖНО: НИКАКОГО app.run() — только gunicorn!
-# Render сам запустит через Procfile
+# ✅ НИКАКОГО app.run() — ТОЛЬКО FLASK-ПРИЛОЖЕНИЕ ДЛЯ GUNICORN!
+# Render запустит gunicorn через Procfile — всё правильно!
