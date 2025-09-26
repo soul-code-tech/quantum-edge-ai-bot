@@ -1,4 +1,4 @@
-# main.py — Quantum Edge AI Bot v6.0 — ЦЕПОЧЕЧНОЕ ОБУЧЕНИЕ ПО ВРЕМЕНИ, НЕ ПО СИГНАЛАМ
+# main.py — Quantum Edge AI Bot v6.1 — РАБОТАЕТ НА RENDER.COM 24/7
 from flask import Flask
 import threading
 import time
@@ -14,7 +14,7 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler()
+        logging.StreamHandler()  # Вывод в лог Render
     ]
 )
 
@@ -32,14 +32,14 @@ RISK_PERCENT = 1.0
 STOP_LOSS_PCT = 1.5
 TAKE_PROFIT_PCT = 3.0
 TRAILING_PCT = 1.0
-LSTM_CONFIDENCE = 0.55
+LSTM_CONFIDENCE = 0.55  # ✅ Снижено до 55% — выше шансов на сделку
 TIMEFRAME = '1h'
 LOOKBACK = 100  # ✅ УВЕЛИЧИЛИ С 60 ДО 100 СВЕЧЕЙ — КАК ВЫ ПРОСИЛИ!
 SIGNAL_COOLDOWN = 3600
 UPDATE_TRAILING_INTERVAL = 300
 TEST_INTERVAL = 86400  # 24 часа
 
-# ЦЕПОЧКА ОБУЧЕНИЯ: каждые 10 минут — одна пара (по порядку!)
+# ЦЕПОЧКА ОБУЧЕНИЯ: каждые 10 минут — одна пара (по порядку)
 LSTM_TRAIN_DELAY = 600  # 10 минут
 MONITORING_CYCLE = 60   # 60 секунд между циклами мониторинга
 
@@ -76,8 +76,8 @@ df = get_bars(SYMBOLS[0], TIMEFRAME, LOOKBACK)
 if df is not None and len(df) >= 100:
     df = calculate_strategy_signals(df, 60)
     try:
-        lstm_models[SYMBOLS[0]].train(df)
-        logging.info(f"✅ {SYMBOLS[0]}: LSTM обучена!")
+        lstm_models[SYMBOLS[0]].train(df, SYMBOLS[0])  # ← Передаём symbol!
+        logging.info(f"✅ {SYMBOLS[0]}: LSTM обучена и сохранена!")
         last_lstm_train_time = time.time()
         last_lstm_next_symbol_index = 1  # Готовим следующую
     except Exception as e:
@@ -101,8 +101,8 @@ def run_strategy():
                 if df is not None and len(df) >= 100:
                     df = calculate_strategy_signals(df, 60)
                     try:
-                        lstm_models[symbol].train(df)
-                        logging.info(f"✅ {symbol}: LSTM обучена!")
+                        lstm_models[symbol].train(df, symbol)  # ← Передаём symbol!
+                        logging.info(f"✅ {symbol}: LSTM обучена и сохранена!")
                         last_lstm_train_time = current_time
                         last_lstm_next_symbol_index = (last_lstm_next_symbol_index + 1) % len(SYMBOLS)
                     except Exception as e:
@@ -133,7 +133,8 @@ def run_strategy():
                     logging.info(f"⏳ Кулдаун: {symbol} — пропускаем")
                     continue
 
-                lstm_prob = lstm_models[symbol].predict_next(df)
+                # ✅ ИСПРАВЛЕНО: передаём и df, и symbol
+                lstm_prob = lstm_models[symbol].predict_next(df, symbol)
                 lstm_confident = lstm_prob > LSTM_CONFIDENCE
                 logging.info(f"🧠 LSTM: {symbol} — {lstm_prob:.2%} → {'✅ ДОПУСТИМ' if lstm_confident else '❌ ОТКЛОНЕНО'}")
 
@@ -219,7 +220,7 @@ def wake_up():
 def health_check():
     return "OK", 200
 
-# ✅ ЗАПУСКАЕМ FLASK — ОБЯЗАТЕЛЬНО ДЛЯ RENDER
+# ✅ КРИТИЧЕСКИЙ ШАГ — ЗАПУСКАЕМ FLASK НА ПОРТУ 10000
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     logging.info(f"🌐 Flask сервер запущен на порту {port}")
