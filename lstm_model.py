@@ -1,4 +1,4 @@
-# lstm_model.py — ФИНАЛЬНАЯ ВЕРСИЯ С СОХРАНЕНИЕМ И ЗАГРУЗКОЙ МОДЕЛЕЙ
+# lstm_model.py — ФИНАЛЬНАЯ РАБОЧАЯ ВЕРСИЯ — СОХРАНЯЕТ И ЗАГРУЖАЕТ МОДЕЛИ
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
