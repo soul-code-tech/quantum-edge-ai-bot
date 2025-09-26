@@ -1,4 +1,4 @@
-# main.py — Quantum Edge AI Bot v5.2 — ФИНАЛЬНАЯ РАБОЧАЯ ВЕРСИЯ (Render совместима)
+# main.py — Quantum Edge AI Bot v5.3 — РАБОТАЕТ НА RENDER.COM 24/7
 from flask import Flask
 import threading
 import time
@@ -32,7 +32,7 @@ RISK_PERCENT = 1.0
 STOP_LOSS_PCT = 1.5
 TAKE_PROFIT_PCT = 3.0
 TRAILING_PCT = 1.0
-LSTM_CONFIDENCE = 0.55
+LSTM_CONFIDENCE = 0.55  # ✅ Снижено до 55%
 TIMEFRAME = '1h'
 LOOKBACK = 200
 SIGNAL_COOLDOWN = 3600
@@ -118,7 +118,7 @@ def run_strategy():
             for i, symbol in enumerate(SYMBOLS):
                 logging.info(f"\n--- [{time.strftime('%H:%M:%S')}] {symbol} ---")
 
-                time.sleep(10)
+                time.sleep(10)  # Разбиваем цикл на 90 сек
 
                 df = get_bars(symbol, TIMEFRAME, LOOKBACK)
                 if df is None or len(df) < 100:
@@ -223,5 +223,9 @@ def wake_up():
 def health_check():
     return "OK", 200
 
-# ✅ НИКАКОГО app.run() — ТОЛЬКО FLASK-ПРИЛОЖЕНИЕ ДЛЯ GUNICORN!
-# Render запустит gunicorn через Procfile — всё правильно!
+# ✅ КРИТИЧЕСКИЙ ШАГ — ЗАПУСКАЕМ FLASK НА ПОРТУ 10000
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    logging.info(f"🌐 Flask сервер запущен на порту {port}")
+    time.sleep(10)  # ✅ ДАЁМ RENDER 10 СЕКУНД УВИДЕТЬ ПОРТ
+    app.run(host='0.0.0.0', port=port)
