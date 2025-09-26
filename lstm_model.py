@@ -41,10 +41,10 @@ class LSTMPredictor:
             data = self.prepare_features(df)
             X, y = self.create_sequences(data)
             X = X.reshape((X.shape[0], X.shape[1], 5))
-            
+
             if self.model is None:
                 self.build_model(input_shape=(X.shape[1], X.shape[2]))
-            
+
             self.model.fit(X, y, epochs=10, batch_size=32, verbose=0)
             self.is_trained = True
             print("✅ LSTM обучена!")
