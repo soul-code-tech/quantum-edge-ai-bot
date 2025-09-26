@@ -116,7 +116,7 @@ def run_strategy():
                 time.sleep(10)
 
                 df = get_bars(symbol, TIMEFRAME, LOOKBACK)
-                iif df is None or len(df) < 50:
+                if df is None or len(df) < 50:
                      logging.error(f"❌ Недостаточно данных для {symbol} (получено {len(df)} свечей)")
                       continue
 
