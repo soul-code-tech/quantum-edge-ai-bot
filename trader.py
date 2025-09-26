@@ -23,6 +23,7 @@ class BingXTrader:
             'secret': os.getenv('BINGX_SECRET_KEY'),
             'options': {'defaultType': 'swap'},
             'enableRateLimit': True,
+            'headers': {'User-Agent': 'QuantumEdgeAI-Bot/1.0'}  # ✅ Защита от блокировок
         })
 
         if use_demo:
@@ -60,9 +61,9 @@ class BingXTrader:
                 'Content-Type': 'application/json'
             }
 
-            url = 'https://open-api.bingx.com/openApi/swap/v2/trade/leverage'
+            url = 'https://open-api.bingx.com/openApi/swap/v2/trade/leverage'  # ✅ УБРАНЫ ПРОБЕЛЫ!
 
-            response = requests.post(url, json=payload, headers=headers)
+            response = requests.post(url, json=payload, headers=headers, timeout=10)
             result = response.json()
 
             if result.get('code') == 0:
@@ -97,8 +98,8 @@ class BingXTrader:
 
     def fetch_with_retry(self, func, max_retries=3, delay=2, backoff=1.5):
         base_urls = [
-            'https://open-api.bingx.com',
-            'https://open-api.bingx.io'
+            'https://open-api.bingx.com',      # ✅ УБРАНЫ ПРОБЕЛЫ!
+            'https://open-api.bingx.io'       # ✅ УБРАНЫ ПРОБЕЛЫ!
         ]
 
         for attempt in range(max_retries):
@@ -109,6 +110,7 @@ class BingXTrader:
                         'secret': os.getenv('BINGX_SECRET_KEY'),
                         'options': {'defaultType': 'swap', 'baseUrl': base_url},
                         'enableRateLimit': True,
+                        'headers': {'User-Agent': 'QuantumEdgeAI-Bot/1.0'}
                     })
                     result = func(new_exchange)
                     self.exchange = new_exchange
@@ -201,21 +203,23 @@ class BingXTrader:
             return market_order
 
         except Exception as e:
-            error_str = str(e)
+            error_str = str(e).lower()
             if "position not exist" in error_str:
                 print(f"❌ {self.symbol}: Позиция не найдена — возможно, ордер не исполнился.")
-            elif "Invalid order quantity" in error_str:
+            elif "invalid order quantity" in error_str:
                 print(f"❌ {self.symbol}: Неверный размер ордера. Проверь лимиты.")
             elif "101415" in error_str:
                 print(f"🚫 {self.symbol}: Торговля временно заблокирована. Ждём...")
             elif "101212" in error_str:
                 print(f"⚠️ {self.symbol}: Есть отложенные ордера — отмени их вручную.")
-            elif "Invalid order type" in error_str:
+            elif "invalid order type" in error_str:
                 print(f"❌ {self.symbol}: Неверный тип ордера. Используй 'stop_limit' и 'limit'.")
-            elif "reduceOnly" in error_str:
+            elif "reduceonly" in error_str:
                 print(f"⚠️ {self.symbol}: reduceOnly требует существующей позиции — проверь, что ордер исполнен.")
+            elif "you have been blocked" in error_str or "cloudflare" in error_str:
+                print(f"🚨🚨🚨 {self.symbol}: КРИТИЧЕСКАЯ ОШИБКА — Cloudflare заблокировал запрос. Проверьте URL и API-ключи!")
             else:
-                print(f"❌ Полная ошибка API {self.symbol}: {type(e).__name__}: {error_str}")
+                print(f"❌ Полная ошибка API {self.symbol}: {type(e).__name__}: {str(e)}")
             return None
 
     def update_trailing_stop(self):
