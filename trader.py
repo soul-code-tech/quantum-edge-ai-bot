@@ -5,7 +5,7 @@ import time
 import hashlib
 import hmac
 import requests
-import random  # ✅ ОБЯЗАТЕЛЬНО ДЛЯ fetch_with_retry
+import random  # ✅ ДЛЯ fetch_with_retry
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -27,14 +27,14 @@ class BingXTrader:
         if use_demo:
             self.exchange.set_sandbox_mode(True)
 
-        # Устанавливаем плечо через ручной запрос — опционально (если нужно)
-        # self._set_leverage(leverage)  # ← ЗАКОММЕНТИРОВАНО — не обязательно
+        # Устанавливаем плечо через ручной запрос — опционально
+        # self._set_leverage(leverage)
 
         # Хранение позиции для трейлинга и динамического TP
         self.position = None
         self.trailing_stop_price = None
-        self.take_profit_price = None  # ← ДИНАМИЧЕСКИЙ TP
-        self.trailing_distance_percent = 1.0  # 1% от цены
+        self.take_profit_price = None
+        self.trailing_distance_percent = 1.0
 
     def _set_leverage(self, leverage):
         """Устанавливает плечо через прямой POST-запрос к BingX (swap)"""
@@ -44,21 +44,17 @@ class BingXTrader:
             api_key = os.getenv('BINGX_API_KEY')
             secret_key = os.getenv('BINGX_SECRET_KEY')
 
-            # ✅ ВСЕ ПАРАМЕТРЫ ДЛЯ ПОДПИСИ — КАК СТРОКИ
             query_string = f"symbol={symbol_for_api}&leverage={str(leverage)}&side=BOTH&timestamp={timestamp}"
-
-            # ✅ ГЕНЕРИРУЕМ ПОДПИСЬ
             signature = hmac.new(
                 secret_key.encode(),
                 query_string.encode(),
                 hashlib.sha256
             ).hexdigest()
 
-            # ✅ ТЕЛО ЗАПРОСА — ТОЧНО ТАКИЕ ЖЕ ПАРАМЕТРЫ, КАК В query_string
             payload = {
                 "symbol": symbol_for_api,
-                "leverage": str(leverage),   # ← ОБЯЗАТЕЛЬНО: СТРОКА!
-                "side": "BOTH",              # ← ОБЯЗАТЕЛЬНО!
+                "leverage": str(leverage),
+                "side": "BOTH",
                 "timestamp": timestamp,
                 "signature": signature
             }
@@ -68,7 +64,6 @@ class BingXTrader:
                 'Content-Type': 'application/json'
             }
 
-            # ✅ ПРАВИЛЬНЫЙ URL — УБРАЛ ЛИШНИЕ ПРОБЕЛЫ
             url = 'https://open-api.bingx.com/openApi/swap/v2/trade/leverage'
 
             response = requests.post(url, json=payload, headers=headers)
@@ -86,36 +81,10 @@ class BingXTrader:
     def get_best_price(self, side):
         """Возвращает лучшую цену (bid/ask) с учётом направления позиции"""
         ticker = self.exchange.fetch_ticker(self.symbol)
-        if side == 'buy':  # Лонг — выход на продажу → используем лучший BID
+        if side == 'buy':
             return ticker['bid']
-        else:  # Шорт — выход на покупку → используем лучший ASK
+        else:
             return ticker['ask']
-
-    def fetch_with_retry(self, func, max_retries=3, delay=2, backoff=1.5):
-        """
-        Умный retry для API-запросов BingX — с backoff и альтернативными доменами
-        """
-        base_urls = [
-            'https://open-api.bingx.com',
-            'https://open-api.bingx.io'
-        ]
-        
-        for attempt in range(max_retries):
-            for base_url in base_urls:
-                try:
-                    exchange = ccxt.bingx({
-                        'options': {'defaultType': 'swap', 'baseUrl': base_url},
-                        'enableRateLimit': True,
-                    })
-                    result = func(exchange)
-                    return result
-                except Exception as e:
-                    if attempt == max_retries - 1 and base_url == base_urls[-1]:
-                        raise Exception(f"❌ Все домены и попытки исчерпаны: {e}")
-                    wait_time = delay * (backoff ** attempt) + random.uniform(0, 1)
-                    print(f"⚠️ Ошибка при обращении к {base_url}: {e}. Повтор через {wait_time:.1f} сек. (попытка {attempt + 1}/{max_retries})")
-                    time.sleep(wait_time)
-                    break  # Переход к следующему домену
 
     def place_order(self, side, amount, stop_loss_percent=1.5, take_profit_percent=3.0):
         """Отправляет рыночный ордер + стоп-лосс + тейк-профит"""
@@ -138,12 +107,10 @@ class BingXTrader:
             order_id = market_order.get('id', 'N/A')
             print(f"✅ Рыночный ордер исполнен: {order_id}")
 
-            # Получаем цену входа — с retry
-            def fetch_ticker_safe():
-                return self.exchange.fetch_ticker(self.symbol)
-            
-            ticker = self.fetch_with_retry(fetch_ticker_safe)
-            entry_price = ticker['last']
+            # ✅ ИСПРАВЛЕНО: ИСПОЛЬЗУЕМ get_bars() ДЛЯ ПОЛУЧЕНИЯ ЦЕНЫ — ОН УЖЕ С RETRY
+            # Это гарантирует, что мы получаем данные, даже если сеть глючит
+            df = get_bars(self.symbol, '1h', 1)  # Берём 1 последнюю свечу
+            entry_price = df['close'].iloc[-1]  # ✅ НАДЕЖНО, БЕЗ ОШИБОК
 
             # ✅ УЧЁТ КОМИССИИ — 0.075% (мейкер)
             commission_rate = 0.00075
@@ -159,7 +126,7 @@ class BingXTrader:
                 self.trailing_stop_price = entry_price * (1 + self.trailing_distance_percent / 100)
 
             # ✅ ДИНАМИЧЕСКИЙ TP — ПРИЛИПАНИЕ К ЛУЧШЕМУ БИДУ/АСКУ
-            buffer = 0.0005  # 0.05% — запас для гарантированного исполнения как мейкер
+            buffer = 0.0005
             if side == 'buy':
                 best_bid = self.get_best_price('buy')
                 self.take_profit_price = best_bid * (1 + buffer)
@@ -167,19 +134,18 @@ class BingXTrader:
                 best_ask = self.get_best_price('sell')
                 self.take_profit_price = best_ask * (1 - buffer)
 
+            print(f"📊 Цена входа: {entry_price:.2f}")
+            
             # ✅ УСЛОВИЕ: ЕСЛИ stop_loss_percent == 0 — НЕ СТАВИМ СТОП-ЛАСС
             if stop_loss_percent > 0:
-                stop_limit_price = stop_loss_price * (1 - 0.0005)  # На 0.05% ниже стопа — чтобы гарантировать исполнение
+                stop_limit_price = stop_loss_price * (1 - 0.0005)
                 self.exchange.create_order(
                     symbol=self.symbol,
                     type='stop_limit',
                     side='sell' if side == 'buy' else 'buy',
                     amount=amount,
                     price=stop_limit_price,
-                    params={
-                        'stopPrice': stop_loss_price,
-                        'reduceOnly': True
-                    }
+                    params={'stopPrice': stop_loss_price, 'reduceOnly': True}
                 )
                 print(f"⛔ Отправка стоп-лосса (stop_limit): {stop_loss_price:.2f} ({stop_loss_percent}%)")
 
@@ -229,11 +195,9 @@ class BingXTrader:
         if not self.position:
             return
 
-        # ✅ Получаем текущую цену — с retry
-        def fetch_ticker_safe():
-            return self.exchange.fetch_ticker(self.symbol)
-        
-        current_price = self.fetch_with_retry(fetch_ticker_safe)['last']
+        # ✅ ИСПРАВЛЕНО: ИСПОЛЬЗУЕМ get_bars() — ОН УЖЕ С RETRY
+        df = get_bars(self.symbol, '1h', 1)
+        current_price = df['close'].iloc[-1]
         side = self.position['side']
 
         # ✅ 1. ТРЕЙЛИНГ-СТОП
@@ -252,7 +216,7 @@ class BingXTrader:
         # ✅ 2. ДИНАМИЧЕСКИЙ ТЕЙК-ПРОФИТ — ОБНОВЛЕНИЕ КАЖДЫЕ 5 МИН
         if side == 'buy':
             best_bid = self.get_best_price('buy')
-            new_tp_price = best_bid * (1 + 0.0005)  # 0.05% выше лучшего bid
+            new_tp_price = best_bid * (1 + 0.0005)
             if new_tp_price > self.take_profit_price:
                 self.take_profit_price = new_tp_price
                 print(f"🎯 {self.symbol}: Тейк-профит обновлён до {new_tp_price:.2f} (лучший bid: {best_bid:.2f})")
@@ -260,7 +224,7 @@ class BingXTrader:
                 self._place_take_profit()
         else:
             best_ask = self.get_best_price('sell')
-            new_tp_price = best_ask * (1 - 0.0005)  # 0.05% ниже лучшего ask
+            new_tp_price = best_ask * (1 - 0.0005)
             if new_tp_price < self.take_profit_price:
                 self.take_profit_price = new_tp_price
                 print(f"🎯 {self.symbol}: Тейк-профит обновлён до {new_tp_price:.2f} (лучший ask: {best_ask:.2f})")
