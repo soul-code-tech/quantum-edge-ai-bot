@@ -1,4 +1,4 @@
-# main.py — Quantum Edge AI Bot v6.2 — РАБОТАЕТ НА RENDER.COM 24/7
+# main.py — Quantum Edge AI Bot v6.3 — РАБОТАЕТ НА RENDER.COM 24/7
 from flask import Flask
 import threading
 import time
@@ -32,9 +32,9 @@ RISK_PERCENT = 1.0
 STOP_LOSS_PCT = 1.5
 TAKE_PROFIT_PCT = 3.0
 TRAILING_PCT = 1.0
-LSTM_CONFIDENCE = 0.55  # ✅ Снижено до 55% — выше шансов на сделку
+LSTM_CONFIDENCE = 0.55
 TIMEFRAME = '1h'
-LOOKBACK = 80  # ✅ УВЕЛИЧИЛИ С 60 ДО 100 СВЕЧЕЙ — КАК ВЫ ПРОСИЛИ!
+LOOKBACK = 50  # ✅ УМЕНЬШИЛИ С 100 ДО 50 — БЕЗОПАСНО И РАБОТАЕТ!
 SIGNAL_COOLDOWN = 3600
 UPDATE_TRAILING_INTERVAL = 300
 TEST_INTERVAL = 86400  # 24 часа
@@ -48,7 +48,7 @@ lstm_models = {}
 traders = {}
 
 for symbol in SYMBOLS:
-    lstm_models[symbol] = LSTMPredictor(lookback=100)  # ✅ 100 свечей
+    lstm_models[symbol] = LSTMPredictor(lookback=50)  # ✅ 50 свечей
     traders[symbol] = BingXTrader(symbol=symbol, use_demo=True, leverage=10)
 
 logging.info("✅ [СТАРТ] Quantum Edge AI Bot запущен на 9 криптопарах")
@@ -107,7 +107,7 @@ def run_strategy():
                     except Exception as e:
                         logging.warning(f"⚠️ {symbol}: Ошибка обучения LSTM — {e}")
                 else:
-                    logging.warning(f"⚠️ {symbol}: Недостаточно данных для обучения (df={len(df) if df is not None else 'None'})")
+                    logging.warning(f"⚠️ {symbol}: Недостаточно данных от API (df={len(df) if df is not None else 'None'})")
 
             # ✅ 2. МОНИТОРИНГ И ТОРГОВЛЯ — КАЖДЫЕ 60 СЕКУНД
             for i, symbol in enumerate(SYMBOLS):
