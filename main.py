@@ -1,4 +1,4 @@
-# main.py — Quantum Edge AI Bot v5.3 — РАБОТАЕТ НА RENDER.COM 24/7
+# main.py — Quantum Edge AI Bot v6.0 — ЦЕПОЧЕЧНОЕ ОБУЧЕНИЕ ПО ВРЕМЕНИ, НЕ ПО СИГНАЛАМ
 from flask import Flask
 import threading
 import time
@@ -14,14 +14,14 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler()  # Вывод в лог Render
+        logging.StreamHandler()
     ]
 )
 
 app = Flask(__name__)
 _bot_started = False
 
-# 9 пар — меньше нагрузки, больше диверсификации
+# 9 пар — в строгом порядке цепочки
 SYMBOLS = [
     'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT',
     'DOGE-USDT', 'AVAX-USDT', 'PENGU-USDT', 'SHIB-USDT', 'LINK-USDT'
@@ -32,23 +32,23 @@ RISK_PERCENT = 1.0
 STOP_LOSS_PCT = 1.5
 TAKE_PROFIT_PCT = 3.0
 TRAILING_PCT = 1.0
-LSTM_CONFIDENCE = 0.55  # ✅ Снижено до 55%
+LSTM_CONFIDENCE = 0.55
 TIMEFRAME = '1h'
-LOOKBACK = 200
+LOOKBACK = 100  # ✅ УВЕЛИЧИЛИ С 60 ДО 100 СВЕЧЕЙ — КАК ВЫ ПРОСИЛИ!
 SIGNAL_COOLDOWN = 3600
 UPDATE_TRAILING_INTERVAL = 300
 TEST_INTERVAL = 86400  # 24 часа
 
-# ЦЕПОЧКА ОБУЧЕНИЯ: каждые 10 минут — одна пара
+# ЦЕПОЧКА ОБУЧЕНИЯ: каждые 10 минут — одна пара (по порядку!)
 LSTM_TRAIN_DELAY = 600  # 10 минут
-MONITORING_CYCLE = 60   # 60 секунд между циклами
+MONITORING_CYCLE = 60   # 60 секунд между циклами мониторинга
 
 # Инициализация
 lstm_models = {}
 traders = {}
 
 for symbol in SYMBOLS:
-    lstm_models[symbol] = LSTMPredictor(lookback=60)
+    lstm_models[symbol] = LSTMPredictor(lookback=100)  # ✅ 100 свечей
     traders[symbol] = BingXTrader(symbol=symbol, use_demo=True, leverage=10)
 
 logging.info("✅ [СТАРТ] Quantum Edge AI Bot запущен на 9 криптопарах")
@@ -58,7 +58,7 @@ logging.info(f"💸 Риск: {RISK_PERCENT}% от депозита на сде�
 logging.info(f"⛔ Стоп-лосс: {STOP_LOSS_PCT}% | 🎯 Тейк-профит: {TAKE_PROFIT_PCT}%")
 logging.info(f"📈 Трейлинг-стоп: {TRAILING_PCT}% от цены")
 logging.info(f"⏳ Кулдаун: {SIGNAL_COOLDOWN} сек. на пару")
-logging.info(f"🔄 LSTM обучение: по цепочке — каждые {LSTM_TRAIN_DELAY//60} минут после сигнала")
+logging.info(f"🔄 LSTM обучение: по цепочке — каждые {LSTM_TRAIN_DELAY//60} минут (независимо от сигналов)")
 logging.info(f"🔁 Мониторинг: {MONITORING_CYCLE} сек. между циклами")
 logging.info(f"🎯 Тестовый ордер: раз в {TEST_INTERVAL//3600} часов")
 
@@ -67,8 +67,7 @@ last_signal_time = {}
 last_trailing_update = {}
 last_test_order = 0
 last_lstm_train_time = 0
-last_lstm_next_symbol_index = 0
-last_signal_sent = False
+last_lstm_next_symbol_index = 0  # Индекс следующей пары для обучения
 total_trades = 0
 
 # ✅ Обучаем первую пару при запуске
@@ -79,24 +78,24 @@ if df is not None and len(df) >= 100:
     try:
         lstm_models[SYMBOLS[0]].train(df)
         logging.info(f"✅ {SYMBOLS[0]}: LSTM обучена!")
-        last_signal_sent = True
         last_lstm_train_time = time.time()
-        last_lstm_next_symbol_index = 1
+        last_lstm_next_symbol_index = 1  # Готовим следующую
     except Exception as e:
         logging.warning(f"⚠️ {SYMBOLS[0]}: Ошибка обучения LSTM — {e}")
 else:
     logging.warning(f"⚠️ {SYMBOLS[0]}: Недостаточно данных для обучения (df={len(df) if df is not None else 'None'})")
 
 def run_strategy():
-    global last_signal_time, last_trailing_update, last_test_order, total_trades, last_lstm_train_time, last_lstm_next_symbol_index, last_signal_sent
+    global last_signal_time, last_trailing_update, last_test_order, total_trades, last_lstm_train_time, last_lstm_next_symbol_index
     while True:
         try:
             current_time = time.time()
 
-            # ✅ 1. ОБУЧЕНИЕ — ПО ЦЕПОЧКЕ
-            if last_signal_sent and current_time - last_lstm_train_time >= LSTM_TRAIN_DELAY:
+            # ✅ 1. ОБУЧЕНИЕ — ПО ВРЕМЕНИ, НЕ ПО СИГНАЛАМ
+            # Каждые 10 минут — обучаем следующую пару в цепочке
+            if current_time - last_lstm_train_time >= LSTM_TRAIN_DELAY:
                 symbol = SYMBOLS[last_lstm_next_symbol_index]
-                logging.info(f"\n🔄 [LSTM] Обучение: {symbol} (после сигнала от {SYMBOLS[(last_lstm_next_symbol_index - 1) % len(SYMBOLS)]})")
+                logging.info(f"\n🔄 [LSTM] Обучение: {symbol} (по расписанию)")
 
                 df = get_bars(symbol, TIMEFRAME, LOOKBACK)
                 if df is not None and len(df) >= 100:
@@ -104,17 +103,14 @@ def run_strategy():
                     try:
                         lstm_models[symbol].train(df)
                         logging.info(f"✅ {symbol}: LSTM обучена!")
-                        last_signal_sent = True
                         last_lstm_train_time = current_time
                         last_lstm_next_symbol_index = (last_lstm_next_symbol_index + 1) % len(SYMBOLS)
                     except Exception as e:
                         logging.warning(f"⚠️ {symbol}: Ошибка обучения LSTM — {e}")
-                        last_signal_sent = False
                 else:
                     logging.warning(f"⚠️ {symbol}: Недостаточно данных для обучения (df={len(df) if df is not None else 'None'})")
-                    last_signal_sent = False
 
-            # ✅ 2. МОНИТОРИНГ И ТОРГОВЛЯ
+            # ✅ 2. МОНИТОРИНГ И ТОРГОВЛЯ — КАЖДЫЕ 60 СЕКУНД
             for i, symbol in enumerate(SYMBOLS):
                 logging.info(f"\n--- [{time.strftime('%H:%M:%S')}] {symbol} ---")
 
@@ -178,14 +174,14 @@ def run_strategy():
                         score = long_score if buy_signal else short_score
                         logging.warning(f"⚠️ {symbol}: Сигнал есть, но не достаточно сильный (score={score}) или LSTM не уверен ({lstm_prob:.2%}) — пропускаем.")
 
-            # ✅ 3. Обновление трейлинг-стопов
+            # ✅ 3. Обновление трейлинг-стопов — каждые 5 минут
             if current_time - last_trailing_update.get('global', 0) > UPDATE_TRAILING_INTERVAL:
                 logging.info("\n🔄 Обновление трейлинг-стопов для всех пар...")
                 for symbol in SYMBOLS:
                     traders[symbol].update_trailing_stop()
                 last_trailing_update['global'] = current_time
 
-            # ✅ 4. ТЕСТОВЫЙ ОРДЕР
+            # ✅ 4. ТЕСТОВЫЙ ОРДЕР — раз в 24 часа
             if current_time - last_test_order > TEST_INTERVAL:
                 test_symbol = SYMBOLS[0]
                 logging.info(f"\n🎯 [ТЕСТ] ПРОВЕРКА СВЯЗИ: Принудительный MARKET BUY на {test_symbol} (раз в 24 часа)")
@@ -197,7 +193,7 @@ def run_strategy():
                 )
                 last_test_order = current_time
 
-            # ✅ 5. ЖДЕМ 60 СЕКУНД
+            # ✅ 5. ЖДЕМ 60 СЕКУНД — ОСНОВНОЙ ЦИКЛ
             logging.info("\n💤 Ждём 60 секунд до следующего цикла мониторинга...")
             time.sleep(MONITORING_CYCLE)
 
@@ -223,7 +219,7 @@ def wake_up():
 def health_check():
     return "OK", 200
 
-# ✅ КРИТИЧЕСКИЙ ШАГ — ЗАПУСКАЕМ FLASK НА ПОРТУ 10000
+# ✅ ЗАПУСКАЕМ FLASK — ОБЯЗАТЕЛЬНО ДЛЯ RENDER
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     logging.info(f"🌐 Flask сервер запущен на порту {port}")
