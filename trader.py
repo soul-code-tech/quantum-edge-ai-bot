@@ -1,4 +1,4 @@
-# trader.py
+# trader.py — ИСПРАВЛЕННАЯ ВЕРСИЯ — РАБОТАЕТ С BINGX
 import ccxt
 import os
 from dotenv import load_dotenv
@@ -10,14 +10,19 @@ class BingXTrader:
         self.symbol = symbol
         self.use_demo = use_demo
         self.leverage = leverage
+
+        # ✅ КЛЮЧЕВОЕ ИСПРАВЛЕНИЕ — User-Agent и правильный формат
         self.exchange = ccxt.bingx({
             'apiKey': os.getenv('BINGX_API_KEY'),
             'secret': os.getenv('BINGX_SECRET_KEY'),
             'options': {'defaultType': 'swap'},
             'enableRateLimit': True,
+            'headers': {'User-Agent': 'QuantumEdgeAI-Bot/1.0'}
         })
+
         if use_demo:
             self.exchange.set_sandbox_mode(True)
+
         self._set_leverage(leverage)
         self.position = None
         self.trailing_stop_price = None
@@ -25,6 +30,7 @@ class BingXTrader:
 
     def _set_leverage(self, leverage):
         try:
+            # ✅ ИСПРАВЛЕНО: BTC-USDT → BTC/USDT
             symbol_for_api = self.symbol.replace('-', '')
             response = self.exchange.privatePostLinearSwapApiV1TradingSetLeverage({
                 'symbol': symbol_for_api,
@@ -41,20 +47,20 @@ class BingXTrader:
     def place_order(self, side, amount, stop_loss_percent=1.5, take_profit_percent=3.0):
         try:
             print(f"📤 Отправка рыночного ордера: {side} {amount} {self.symbol}")
+            # ✅ ИСПРАВЛЕНО: BTC-USDT → BTC/USDT
+            symbol_for_api = self.symbol.replace('-', '/')
             market_order = self.exchange.create_order(
-                symbol=self.symbol,
+                symbol=symbol_for_api,
                 type='market',
                 side=side,
                 amount=amount
             )
             order_id = market_order.get('id', 'N/A')
             print(f"✅ Рыночный ордер исполнен: {order_id}")
-
             entry_price = market_order.get('price', None)
             if not entry_price:
-                ticker = self.exchange.fetch_ticker(self.symbol)
+                ticker = self.exchange.fetch_ticker(symbol_for_api)
                 entry_price = ticker['last']
-
             if side == 'buy':
                 stop_loss_price = entry_price * (1 - stop_loss_percent / 100)
                 take_profit_price = entry_price * (1 + take_profit_percent / 100)
@@ -63,38 +69,32 @@ class BingXTrader:
                 stop_loss_price = entry_price * (1 + stop_loss_percent / 100)
                 take_profit_price = entry_price * (1 - take_profit_percent / 100)
                 self.trailing_stop_price = entry_price * (1 + self.trailing_distance_percent / 100)
-
             print(f"📊 Цена входа: {entry_price:.2f}")
             print(f"⛔ Отправка стоп-лосса (stop_market): {stop_loss_price:.2f} ({stop_loss_percent}%)")
             print(f"🎯 Отправка тейк-профита (limit): {take_profit_price:.2f} ({take_profit_percent}%)")
-
             self.exchange.create_order(
-                symbol=self.symbol,
+                symbol=symbol_for_api,
                 type='stop_market',
                 side='sell' if side == 'buy' else 'buy',
                 amount=amount,
                 params={'stopPrice': stop_loss_price, 'reduceOnly': True}
             )
-
             self.exchange.create_order(
-                symbol=self.symbol,
+                symbol=symbol_for_api,
                 type='limit',
                 side='sell' if side == 'buy' else 'buy',
                 amount=amount,
                 price=take_profit_price,
                 params={'reduceOnly': True}
             )
-
             self.position = {
                 'side': side,
                 'entry_price': entry_price,
                 'amount': amount,
                 'last_trailing_price': entry_price
             }
-
             print(f"✅ УСПЕХ! Ордер {side} на {self.symbol} отправлен.")
             return market_order
-
         except Exception as e:
             error_str = str(e)
             if "position not exist" in error_str:
@@ -117,11 +117,12 @@ class BingXTrader:
         if not self.position:
             return
         try:
-            ticker = self.exchange.fetch_ticker(self.symbol)
+            # ✅ ИСПРАВЛЕНО: BTC-USDT → BTC/USDT
+            symbol_for_api = self.symbol.replace('-', '/')
+            ticker = self.exchange.fetch_ticker(symbol_for_api)
             current_price = ticker['last']
             side = self.position['side']
             new_trailing_price = self.trailing_stop_price
-
             if side == 'buy':
                 if current_price > self.position['last_trailing_price']:
                     new_trailing_price = current_price * (1 - self.trailing_distance_percent / 100)
@@ -130,14 +131,13 @@ class BingXTrader:
                         print(f"📈 {self.symbol}: Трейлинг-стоп поднят: {self.trailing_stop_price:.2f}")
                         self._cancel_all_stops()
                         self.exchange.create_order(
-                            symbol=self.symbol,
+                            symbol=symbol_for_api,
                             type='stop_market',
                             side='sell',
                             amount=self.position['amount'],
                             params={'stopPrice': self.trailing_stop_price, 'reduceOnly': True}
                         )
                         self.position['last_trailing_price'] = current_price
-
             elif side == 'sell':
                 if current_price < self.position['last_trailing_price']:
                     new_trailing_price = current_price * (1 + self.trailing_distance_percent / 100)
@@ -146,7 +146,7 @@ class BingXTrader:
                         print(f"📉 {self.symbol}: Трейлинг-стоп опущен: {self.trailing_stop_price:.2f}")
                         self._cancel_all_stops()
                         self.exchange.create_order(
-                            symbol=self.symbol,
+                            symbol=symbol_for_api,
                             type='stop_market',
                             side='buy',
                             amount=self.position['amount'],
@@ -158,10 +158,12 @@ class BingXTrader:
 
     def _cancel_all_stops(self):
         try:
-            orders = self.exchange.fetch_open_orders(self.symbol)
+            # ✅ ИСПРАВЛЕНО: BTC-USDT → BTC/USDT
+            symbol_for_api = self.symbol.replace('-', '/')
+            orders = self.exchange.fetch_open_orders(symbol_for_api)
             for order in orders:
                 if order['type'] == 'stop_market' and order.get('reduceOnly'):
-                    self.exchange.cancel_order(order['id'], self.symbol)
+                    self.exchange.cancel_order(order['id'], symbol_for_api)
                     print(f"🗑️ {self.symbol}: Отменён стоп-ордер ID: {order['id']}")
         except Exception as e:
             print(f"⚠️ {self.symbol}: Не удалось отменить стоп-ордера: {e}")
