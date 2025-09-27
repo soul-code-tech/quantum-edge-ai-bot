@@ -1,7 +1,5 @@
-import os
-import time
-import pickle
-import logging
+# trainer.py
+import os, time, pickle, logging
 from data_fetcher import get_bars
 from lstm_model import LSTMPredictor
 
@@ -25,7 +23,7 @@ def train_one(symbol: str, lookback: int = 60) -> None:
     except Exception as e:
         print(f"❌ train error for {symbol}: {e}")
 
-def load_model(symbol: str, lookback: int = 60) -> LSTMPredictor | None:
+def load_model(symbol: str, lookback: int = 60):
     path = model_path(symbol)
     if not os.path.exists(path):
         return None
@@ -41,7 +39,15 @@ def load_model(symbol: str, lookback: int = 60) -> LSTMPredictor | None:
         print(f"⚠️ load model error for {symbol}: {e}")
         return None
 
-def sequential_trainer(symbols: list[str], interval: int = 600) -> None:
+def initial_train_all(symbols: list[str]) -> None:
+    """Первичное обучение всех пар перед стартом."""
+    print("🧠 Начинаем первичное обучение всех пар...")
+    for s in symbols:
+        train_one(s)
+    print("🧠 Первичное обучение завершено.")
+
+def sequential_trainer(symbols: list[str], interval: int = 600):
+    """Бесконечное дообучение по одной паре каждые <interval> секунд."""
     idx = 0
     while True:
         sym = symbols[idx % len(symbols)]
