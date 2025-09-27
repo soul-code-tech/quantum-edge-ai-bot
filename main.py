@@ -14,8 +14,8 @@ app = Flask(__name__)
 
 SYMBOLS = [
     'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT',
-    'XRP-USDT', 'DOGE-USDT', 'AVAX-USDT',
-    'SHIB-USDT', 'PENGU-USDT'
+    'XRP-USDT', 'DOGE-USDT', 'TON-USDT', 'AVAX-USDT',
+    'SHIB-USDT', 'LINK-USDT', 'PENGU-USDT'
 ]
 
 RISK_PERCENT = 1.0
@@ -124,7 +124,7 @@ def run_strategy():
             print("⏳ Перезапуск цикла через 60 секунд...")
             time.sleep(60)
 
-# ==========  ЕДИНОРАЗОВЫЙ СТАРТ  ==========
+# ==========  ЕДИНОРАЗОВЫЙ СТАРТ (фон)  ==========
 def start_all():
     # 1. строго последовательное обучение ВСЕХ пар
     initial_train_all(SYMBOLS)
@@ -146,8 +146,8 @@ def health_check():
     return "OK", 200
 
 if __name__ == "__main__":
-    # обучаемся и грузим модели ДО старта Flask
-    start_all()
+    # обучение и все фоновые задачи – в отдельном потоке
+    threading.Thread(target=start_all, daemon=True).start()
     port = int(os.environ.get("PORT", 10000))
     print(f"🌐 Flask server starting on port {port}")
     app.run(host='0.0.0.0', port=port)
