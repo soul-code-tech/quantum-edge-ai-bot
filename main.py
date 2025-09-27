@@ -12,9 +12,9 @@ from trainer import initial_train_all, sequential_trainer, load_model
 app = Flask(__name__)
 
 SYMBOLS = [
-    'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT',
+    'BTC-USDT', 'ETH-USDT', 'BNB-USDT',
     'XRP-USDT', 'DOGE-USDT', 'AVAX-USDT',
-    'SHIB-USDT', 'LINK-USDT', 'PENGU-USDT'
+    'SHIB-USDT', 'LINK-USDT', 'PENGU-USDT', 'SOL-USDT' 
 ]
 
 RISK_PERCENT = 1.0
