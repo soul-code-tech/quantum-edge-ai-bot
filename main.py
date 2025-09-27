@@ -97,7 +97,7 @@ def run_strategy():
 
             for i, symbol in enumerate(SYMBOLS):
                 logging.info(f"\n--- [{time.strftime('%H:%M:%S')}] {symbol} ---")
-                 time.sleep(10)
+                time.sleep(10)
 
                 df = get_bars(symbol, TIMEFRAME, LOOKBACK)
                 if df is None or len(df) < 50:
