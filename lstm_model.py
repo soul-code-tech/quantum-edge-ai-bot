@@ -3,7 +3,7 @@ def train(self, df, symbol):
         data = self.prepare_features(df)
         
         # ✅ Проверка: хватает ли данных?
-        if len(data) < self.lookback:
+        if len(data) < self.lookback:  # 60
             raise ValueError(f"Недостаточно данных после обработки: {len(data)} строк, нужно {self.lookback}")
         
         X, y = self.create_sequences(data)
