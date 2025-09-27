@@ -1,3 +1,4 @@
+# main.py
 from flask import Flask
 import threading
 import time
@@ -12,31 +13,32 @@ from trainer import initial_train_all, sequential_trainer, load_model
 app = Flask(__name__)
 
 SYMBOLS = [
-    'BTC-USDT', 'ETH-USDT', 'BNB-USDT',
-     'DOGE-USDT', 'AVAX-USDT','XRP-USDT',
-    'SHIB-USDT', 'LINK-USDT', 'PENGU-USDT', 'SOL-USDT' 
+    'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT',
+    'XRP-USDT', 'DOGE-USDT', 'TON-USDT', 'AVAX-USDT',
+    'SHIB-USDT', 'LINK-USDT', 'PENGU-USDT'
 ]
 
 RISK_PERCENT = 1.0
 STOP_LOSS_PCT = 1.5
 TAKE_PROFIT_PCT = 3.0
 TRAILING_PCT = 1.0
-LSTM_CONFIDENCE = 0.75
+LSTM_CONFIDENCE = 0.65
 TIMEFRAME = '1h'
 LOOKBACK = 200
 SIGNAL_COOLDOWN = 3600
 UPDATE_TRAILING_INTERVAL = 300
 
-# --- ИНИЦИАЛИЗАЦИЯ БЕЗ ОБУЧЕНИЯ ---
 lstm_models = {}
 traders = {}
-
-print("✅ [СТАРТ] Quantum Edge AI Bot запущен на", len(SYMBOLS), "парах")
+for s in SYMBOLS:
+    lstm_models[s] = LSTMPredictor()
+    traders[s] = BingXTrader(symbol=s, use_demo=True, leverage=10)
 
 last_signal_time = {}
 last_trailing_update = {}
 total_trades = 0
 
+# --------- heartbeat для Render ---------
 def keep_alive():
     host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
     if not host:
@@ -49,29 +51,39 @@ def keep_alive():
             pass
         time.sleep(120)
 
+# --------- фоновая обучающая очередь ---------
+training_queue = SYMBOLS.copy()
+training_active = True
+
+def background_trainer():
+    """Обучает по одной паре из очереди, не блокируя торговлю."""
+    global training_active
+    idx = 0
+    while training_active:
+        if not training_queue:
+            time.sleep(1)
+            continue
+        symbol = training_queue.pop(0)
+        print(f"\n--- [ФОН] Обучаем {symbol} ---")
+        from trainer import train_one, load_model
+        if train_one(symbol, epochs=5):
+            lstm_models[symbol] = load_model(symbol) or LSTMPredictor()
+        else:
+            lstm_models[symbol] = LSTMPredictor()  # fallback
+        idx += 1
+        time.sleep(2)  # пауза между обучением
+
+# --------- основной торговый цикл ---------
 def run_strategy():
     global last_signal_time, last_trailing_update, total_trades
-
-    # --- ЗАГРУЗКА МОДЕЛЕЙ И ТРЕЙДЕРОВ ---
-    print("🔄 Загружаем модели и инициализируем трейдеров...")
-    for symbol in SYMBOLS:
-        model = load_model(symbol)
-        if model:
-            lstm_models[symbol] = model
-            print(f"✅ Модель для {symbol} загружена.")
-        else:
-            print(f"❌ Модель для {symbol} не найдена. Используем пустую, но обучение должно было пройти.")
-            lstm_models[symbol] = LSTMPredictor()
-    
-    for symbol in SYMBOLS:
-        traders[symbol] = BingXTrader(symbol=symbol, use_demo=False, leverage=10)  # ! use_demo=False
-
-    print("🚀 Торговый цикл запущен.")
-
     while True:
         try:
             current_time = time.time()
             for symbol in SYMBOLS:
+                # если модель ещё не обучена – пропускаем
+                if not lstm_models[symbol].is_trained:
+                    continue
+
                 print(f"\n--- [{time.strftime('%H:%M:%S')}] {symbol} ---")
                 df = get_bars(symbol, TIMEFRAME, LOOKBACK)
                 if df is None or len(df) < 100:
@@ -89,12 +101,7 @@ def run_strategy():
                     print(f"⏳ Кулдаун: {symbol} – пропускаем")
                     continue
 
-                # --- ПРОВЕРКА ОБУЧЕННОСТИ МОДЕЛИ ---
                 model = lstm_models[symbol]
-                if not model.is_trained:
-                    print(f"⚠️ Модель для {symbol} не обучена. Пропускаем.")
-                    continue
-
                 lstm_prob = model.predict_next(df)
                 lstm_confident = lstm_prob > LSTM_CONFIDENCE
                 print(f"🧠 LSTM: {symbol} – {lstm_prob:.2%} → {'✅ ДОПУСТИМ' if lstm_confident else '❌ ОТКЛОНЕНО'}")
@@ -110,7 +117,6 @@ def run_strategy():
                     amount = risk_amount / stop_distance if stop_distance > 0 else 0.001
                     if amount < 0.001:
                         amount = 0.001
-                    print(f"📊 Размер позиции: {amount:.6f} {symbol.split('-')[0]} | ATR: {atr:.4f}")
                     order = traders[symbol].place_order(
                         side=side,
                         amount=amount,
@@ -121,12 +127,11 @@ def run_strategy():
                         print(f"✅ Ордер {side} на {symbol} отправлен.")
                         total_trades += 1
                         last_signal_time[symbol] = current_time
-                    else:
-                        print(f"❌ Ордер не отправлен на {symbol}")
                 else:
                     if buy_signal or sell_signal:
                         print(f"⚠️ {symbol}: сигнал есть, но не достаточно сильный (score={long_score if buy_signal else short_score}) или LSTM не уверен ({lstm_prob:.2%}) – пропускаем.")
 
+            # обновление трейлинг-стопов
             if current_time - last_trailing_update.get('global', 0) > UPDATE_TRAILING_INTERVAL:
                 print("\n🔄 Обновление трейлинг-стопов для всех пар...")
                 for symbol in SYMBOLS:
@@ -140,14 +145,15 @@ def run_strategy():
             print("⏳ Перезапуск цикла через 60 секунд...")
             time.sleep(60)
 
+# ========== ЕДИНОРАЗОВЫЙ СТАРТ ==========
 def start_all():
-    # 1. Последовательное первичное обучение (один раз)
-    initial_train_all(SYMBOLS)
-    # 2. Запуск фоновых задач: торговля, дообучение, keep-alive
+    # 1. запускаем фоновое обучение (не блокирует Flask)
+    threading.Thread(target=background_trainer, daemon=True).start()
+    # 2. запускаем торговлю
     threading.Thread(target=run_strategy, daemon=True).start()
-    threading.Thread(target=sequential_trainer, args=(SYMBOLS, 600), daemon=True).start()
+    # 3. keep-alive
     threading.Thread(target=keep_alive, daemon=True).start()
-    print("🚀 trading + sequential 10-min retraining + keep-alive loops started")
+    print("🚀 trading + background training + keep-alive loops started")
 
 @app.route('/')
 def wake_up():
@@ -158,7 +164,6 @@ def health_check():
     return "OK", 200
 
 if __name__ == "__main__":
-    # Запускаем обучение и фоновые задачи в отдельном потоке
     threading.Thread(target=start_all, daemon=True).start()
     port = int(os.environ.get("PORT", 10000))
     print(f"🌐 Flask server starting on port {port}")
