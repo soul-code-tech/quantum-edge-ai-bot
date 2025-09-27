@@ -1,9 +1,10 @@
-# lstm_model.py — ИСПРАВЛЕННАЯ ВЕРСИЯ — БЕЗ ОПАСНЫХ ПОВТОРНЫХ ОБУЧЕНИЙ
+# lstm_model.py — СОХРАНЯЕТ МОДЕЛИ
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import Sequential, load_model
 from tensorflow.keras.layers import LSTM, Dense, Dropout
+from tensorflow.keras.callbacks import ModelCheckpoint
 import os
 
 class LSTMPredictor:
@@ -13,7 +14,7 @@ class LSTMPredictor:
         self.model = None
         self.is_trained = False
         self.model_dir = model_dir
-        os.makedirs(self.model_dir, exist_ok=True)
+        os.makedirs(model_dir, exist_ok=True)
 
     def prepare_features(self, df):
         df_features = df[['close', 'volume', 'rsi', 'sma20', 'atr']].copy().dropna()
@@ -39,44 +40,45 @@ class LSTMPredictor:
         self.model = model
 
     def train(self, df, symbol):
-        """Обучаем и сохраняем модель в файл — только один раз!"""
-        print(f"🧠 Обучаем LSTM-модель для {symbol}...")
-        data = self.prepare_features(df)
-        X, y = self.create_sequences(data)
-        if len(X) == 0:
-            print(f"⚠️ Недостаточно данных для {symbol} после обработки")
-            return
+        try:
+            data = self.prepare_features(df)
+            X, y = self.create_sequences(data)
+            X = X.reshape((X.shape[0], X.shape[1], 5))
 
-        X = X.reshape((X.shape[0], X.shape[1], 5))
-        self.build_model(input_shape=(X.shape[1], X.shape[2]))
-        self.model.fit(X, y, epochs=10, batch_size=32, verbose=0)
+            if self.model is None:
+                self.build_model(input_shape=(X.shape[1], X.shape[2]))
 
-        # ✅ СОХРАНЯЕМ МОДЕЛЬ В ФАЙЛ — ЭТО КЛЮЧЕВОЕ!
-        model_path = os.path.join(self.model_dir, f"{symbol}.keras")
-        self.model.save(model_path)
-        self.is_trained = True
-        print(f"✅ LSTM обучена и сохранена в {model_path}")
+            model_path = os.path.join(self.model_dir, f"{symbol}.keras")
+            checkpoint = ModelCheckpoint(model_path, monitor='loss', save_best_only=True, mode='min')
+
+            self.model.fit(X, y, epochs=10, batch_size=32, verbose=0, callbacks=[checkpoint])
+            self.is_trained = True
+            print(f"✅ {symbol}: LSTM обучена и сохранена в {model_path}")
+        except Exception as e:
+            print(f"⚠️ Ошибка обучения LSTM для {symbol}: {e}")
 
     def predict_next(self, df, symbol):
-        """Загружаем модель, если есть — иначе обучаем и сохраняем"""
         model_path = os.path.join(self.model_dir, f"{symbol}.keras")
-
-        # ✅ ПРОВЕРКА: есть ли сохранённая модель?
         if os.path.exists(model_path):
             try:
                 self.model = load_model(model_path)
                 self.is_trained = True
-                print(f"🔄 Загружена сохранённая модель для {symbol}")
+                print(f"🔄 {symbol}: Загружена сохранённая модель из {model_path}")
             except Exception as e:
-                print(f"⚠️ Не удалось загрузить модель {model_path}: {e}")
+                print(f"⚠️ {symbol}: Не удалось загрузить модель: {e}")
                 self.is_trained = False
+        else:
+            print(f"⚠️ {symbol}: Модель ещё не обучена. Используется последнее состояние.")
+            self.is_trained = False
 
-        # ✅ ЕСЛИ НЕТ — ОБУЧАЕМ И СОХРАНЯЕМ (ТОЛЬКО ОДИН РАЗ!)
         if not self.is_trained:
-            self.train(df, symbol)
+            return 0.5
 
-        # ✅ ПРОГНОЗ
-        data = self.prepare_features(df)
-        last_sequence = data[-self.lookback:].reshape(1, self.lookback, 5)
-        prob = self.model.predict(last_sequence, verbose=0)[0][0]
-        return prob
+        try:
+            data = self.prepare_features(df)
+            last_sequence = data[-self.lookback:].reshape(1, self.lookback, 5)
+            prob = self.model.predict(last_sequence, verbose=0)[0][0]
+            return prob
+        except Exception as e:
+            print(f"⚠️ Ошибка прогноза для {symbol}: {e}")
+            return 0.5
