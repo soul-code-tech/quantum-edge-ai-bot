@@ -1,4 +1,4 @@
-# lstm_model.py — СОХРАНЯЕТ МОДЕЛИ
+# lstm_model.py — ИСПРАВЛЕННЫЙ
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
@@ -8,7 +8,7 @@ from tensorflow.keras.callbacks import ModelCheckpoint
 import os
 
 class LSTMPredictor:
-    def __init__(self, lookback=60, model_dir="models"):
+    def __init__(self, lookback=50, model_dir="models"):
         self.lookback = lookback
         self.scaler = MinMaxScaler(feature_range=(0, 1))
         self.model = None
@@ -40,25 +40,33 @@ class LSTMPredictor:
         self.model = model
 
     def train(self, df, symbol):
+        """Обучаем и сохраняем модель"""
         try:
             data = self.prepare_features(df)
-            X, y = self.create_sequences(data)
-            X = X.reshape((X.shape[0], X.shape[1], 5))
+            if len(data) < self.lookback:
+                raise ValueError(f"Недостаточно данных после dropna(): {len(data)} строк, нужно {self.lookback}")
 
+            X, y = self.create_sequences(data)
+            if len(X) == 0:
+                raise ValueError("Не создано ни одной последовательности")
+
+            X = X.reshape((X.shape[0], X.shape[1], 5))
             if self.model is None:
                 self.build_model(input_shape=(X.shape[1], X.shape[2]))
 
             model_path = os.path.join(self.model_dir, f"{symbol}.keras")
             checkpoint = ModelCheckpoint(model_path, monitor='loss', save_best_only=True, mode='min')
-
             self.model.fit(X, y, epochs=10, batch_size=32, verbose=0, callbacks=[checkpoint])
             self.is_trained = True
             print(f"✅ {symbol}: LSTM обучена и сохранена в {model_path}")
+
         except Exception as e:
             print(f"⚠️ Ошибка обучения LSTM для {symbol}: {e}")
 
     def predict_next(self, df, symbol):
+        """Загружаем модель, если есть — иначе возвращаем 50%"""
         model_path = os.path.join(self.model_dir, f"{symbol}.keras")
+
         if os.path.exists(model_path):
             try:
                 self.model = load_model(model_path)
@@ -67,11 +75,9 @@ class LSTMPredictor:
             except Exception as e:
                 print(f"⚠️ {symbol}: Не удалось загрузить модель: {e}")
                 self.is_trained = False
-        else:
-            print(f"⚠️ {symbol}: Модель ещё не обучена. Используется последнее состояние.")
-            self.is_trained = False
 
         if not self.is_trained:
+            print(f"⚠️ {symbol}: Модель ещё не обучена. Используется последнее состояние.")
             return 0.5
 
         try:
