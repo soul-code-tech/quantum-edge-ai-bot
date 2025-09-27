@@ -46,9 +46,9 @@ class LSTMPredictor:
         print("✅ LSTM обучена!")
 
     def predict_next(self, df):
-        if not self.is_trained:
-            self.train(df)
+        if not self.is_trained:          # модель уже загружена из файла
+            return 0.5
         data = self.prepare_features(df)
-        last_sequence = data[-self.lookback:].reshape(1, self.lookback, 5)
-        prob = self.model.predict(last_sequence, verbose=0)[0][0]
+        last_sequence = data[-self.lookback:].reshape(1, self.lookback, data.shape[1])
+        prob = float(self.model.predict(last_sequence, verbose=0)[0][0])
         return prob
