@@ -11,19 +11,18 @@ from lstm_model import LSTMPredictor
 from trainer import initial_train_all, sequential_trainer, load_model
 
 app = Flask(__name__)
-_bot_started = False
 
 SYMBOLS = [
     'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT',
-    'XRP-USDT', 'DOGE-USDT', 'TON-USDT', 'AVAX-USDT',
-    'SHIB-USDT', 'LINK-USDT', 'PENGU-USDT'
+    'XRP-USDT', 'DOGE-USDT', 'AVAX-USDT',
+    'SHIB-USDT', 'PENGU-USDT'
 ]
 
 RISK_PERCENT = 1.0
 STOP_LOSS_PCT = 1.5
 TAKE_PROFIT_PCT = 3.0
 TRAILING_PCT = 1.0
-LSTM_CONFIDENCE = 0.70
+LSTM_CONFIDENCE = 0.75
 TIMEFRAME = '1h'
 LOOKBACK = 200
 SIGNAL_COOLDOWN = 3600
@@ -35,11 +34,11 @@ for s in SYMBOLS:
     lstm_models[s] = LSTMPredictor()
     traders[s] = BingXTrader(symbol=s, use_demo=True, leverage=10)
 
-print("✅ [СТАРТ] Quantum Edge AI Bot запущен на", len(SYMBOLS), "парах")
-
 last_signal_time = {}
 last_trailing_update = {}
 total_trades = 0
+
+print("✅ [СТАРТ] Quantum Edge AI Bot запущен на", len(SYMBOLS), "парах")
 
 # ---------  keep-alive для Render  ---------
 def keep_alive():
@@ -125,23 +124,18 @@ def run_strategy():
             print("⏳ Перезапуск цикла через 60 секунд...")
             time.sleep(60)
 
-# ---------  запускаем всё один раз  ---------
-@app.before_request
-def start_bot_once():
-    global _bot_started
-    if _bot_started:
-        return
-    # 1. Последовательное первичное обучение (BTC→ETH→SOL…)
+# ==========  ЕДИНОРАЗОВЫЙ СТАРТ  ==========
+def start_all():
+    # 1. строго последовательное обучение ВСЕХ пар
     initial_train_all(SYMBOLS)
-    # 2. Загружаем готовые модели
+    # 2. загружаем готовые модели
     for s in SYMBOLS:
         lstm_models[s] = load_model(s) or LSTMPredictor()
-    # 3. Потоки: торговля + дообучение каждые 10 мин + keep-alive
+    # 3. потоки: торговля + дообучение раз в 10 мин + keep-alive
     threading.Thread(target=run_strategy, daemon=True).start()
     threading.Thread(target=sequential_trainer, args=(SYMBOLS, 600), daemon=True).start()
     threading.Thread(target=keep_alive, daemon=True).start()
     print("🚀 trading + sequential 10-min retraining + keep-alive loops started")
-    _bot_started = True
 
 @app.route('/')
 def wake_up():
@@ -152,6 +146,8 @@ def health_check():
     return "OK", 200
 
 if __name__ == "__main__":
+    # обучаемся и грузим модели ДО старта Flask
+    start_all()
     port = int(os.environ.get("PORT", 10000))
     print(f"🌐 Flask server starting on port {port}")
     app.run(host='0.0.0.0', port=port)
