@@ -1,6 +1,9 @@
-# ---------  импорт  ---------
+# main.py
 from flask import Flask
-import threading, time, os, requests
+import threading
+import time
+import os
+import requests
 from data_fetcher import get_bars
 from strategy import calculate_strategy_signals
 from trader import BingXTrader
@@ -51,7 +54,7 @@ def keep_alive():
             pass
         time.sleep(120)
 
-# ---------  обучение + торговля  ---------
+# ---------  торговый цикл  ---------
 def run_strategy():
     global last_signal_time, last_trailing_update, total_trades
     while True:
@@ -72,13 +75,13 @@ def run_strategy():
 
                 last_time = last_signal_time.get(symbol, 0)
                 if current_time - last_time < SIGNAL_COOLDOWN:
-                    print(f"⏳ Кулдаун: {symbol} — пропускаем")
+                    print(f"⏳ Кулдаун: {symbol} – пропускаем")
                     continue
 
                 model = lstm_models[symbol]
                 lstm_prob = model.predict_next(df)
                 lstm_confident = lstm_prob > LSTM_CONFIDENCE
-                print(f"🧠 LSTM: {symbol} — {lstm_prob:.2%} → {'✅ ДОПУСТИМ' if lstm_confident else '❌ ОТКЛОНЕНО'}")
+                print(f"🧠 LSTM: {symbol} – {lstm_prob:.2%} → {'✅ ДОПУСТИМ' if lstm_confident else '❌ ОТКЛОНЕНО'}")
 
                 strong_strategy = (buy_signal and long_score >= 5) or (sell_signal and short_score >= 5)
                 if strong_strategy and lstm_confident:
@@ -106,9 +109,9 @@ def run_strategy():
                         print(f"❌ Ордер не отправлен на {symbol}")
                 else:
                     if buy_signal or sell_signal:
-                        print(f"⚠️ {symbol}: сигнал есть, но не достаточно сильный (score={long_score if buy_signal else short_score}) или LSTM не уверен ({lstm_prob:.2%}) — пропускаем.")
+                        print(f"⚠️ {symbol}: сигнал есть, но не достаточно сильный (score={long_score if buy_signal else short_score}) или LSTM не уверен ({lstm_prob:.2%}) – пропускаем.")
 
-            # обновление трейлинга
+            # обновление трейлинг-стопов
             if current_time - last_trailing_update.get('global', 0) > UPDATE_TRAILING_INTERVAL:
                 print("\n🔄 Обновление трейлинг-стопов для всех пар...")
                 for symbol in SYMBOLS:
@@ -122,27 +125,27 @@ def run_strategy():
             print("⏳ Перезапуск цикла через 60 секунд...")
             time.sleep(60)
 
-# ---------  Flask  ---------
+# ---------  запускаем всё один раз  ---------
 @app.before_request
 def start_bot_once():
     global _bot_started
     if _bot_started:
         return
-    # первичное обучение
+    # 1. Последовательное первичное обучение (BTC→ETH→SOL…)
     initial_train_all(SYMBOLS)
-    # загружаем модели из файлов
+    # 2. Загружаем готовые модели
     for s in SYMBOLS:
         lstm_models[s] = load_model(s) or LSTMPredictor()
-    # потоки
+    # 3. Потоки: торговля + дообучение каждые 10 мин + keep-alive
     threading.Thread(target=run_strategy, daemon=True).start()
     threading.Thread(target=sequential_trainer, args=(SYMBOLS, 600), daemon=True).start()
     threading.Thread(target=keep_alive, daemon=True).start()
-    print("🚀 trading + sequential training + keep-alive loops started")
+    print("🚀 trading + sequential 10-min retraining + keep-alive loops started")
     _bot_started = True
 
 @app.route('/')
 def wake_up():
-    return "✅ Quantum Edge AI Bot is LIVE on {} cryptos!".format(len(SYMBOLS)), 200
+    return f"✅ Quantum Edge AI Bot is LIVE on {len(SYMBOLS)} cryptos!", 200
 
 @app.route('/health')
 def health_check():
