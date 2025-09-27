@@ -9,6 +9,7 @@ from strategy import calculate_strategy_signals
 from trader import BingXTrader
 from lstm_model import LSTMPredictor
 from trainer import initial_train_all, sequential_trainer, load_model
+from download_weights import download_weights   # ← новый импорт
 
 app = Flask(__name__)
 
@@ -22,7 +23,7 @@ RISK_PERCENT = 1.0
 STOP_LOSS_PCT = 1.5
 TAKE_PROFIT_PCT = 3.0
 TRAILING_PCT = 1.0
-LSTM_CONFIDENCE = 0.65
+LSTM_CONFIDENCE = 0.75
 TIMEFRAME = '1h'
 LOOKBACK = 200
 SIGNAL_COOLDOWN = 3600
@@ -38,7 +39,6 @@ last_signal_time = {}
 last_trailing_update = {}
 total_trades = 0
 
-# --------- heartbeat для Render ---------
 def keep_alive():
     host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
     if not host:
@@ -51,39 +51,14 @@ def keep_alive():
             pass
         time.sleep(120)
 
-# --------- фоновая обучающая очередь ---------
-training_queue = SYMBOLS.copy()
-training_active = True
-
-def background_trainer():
-    """Обучает по одной паре из очереди, не блокируя торговлю."""
-    global training_active
-    idx = 0
-    while training_active:
-        if not training_queue:
-            time.sleep(1)
-            continue
-        symbol = training_queue.pop(0)
-        print(f"\n--- [ФОН] Обучаем {symbol} ---")
-        from trainer import train_one, load_model
-        if train_one(symbol, epochs=5):
-            lstm_models[symbol] = load_model(symbol) or LSTMPredictor()
-        else:
-            lstm_models[symbol] = LSTMPredictor()  # fallback
-        idx += 1
-        time.sleep(2)  # пауза между обучением
-
-# --------- основной торговый цикл ---------
 def run_strategy():
     global last_signal_time, last_trailing_update, total_trades
     while True:
         try:
             current_time = time.time()
             for symbol in SYMBOLS:
-                # если модель ещё не обучена – пропускаем
                 if not lstm_models[symbol].is_trained:
                     continue
-
                 print(f"\n--- [{time.strftime('%H:%M:%S')}] {symbol} ---")
                 df = get_bars(symbol, TIMEFRAME, LOOKBACK)
                 if df is None or len(df) < 100:
@@ -131,7 +106,6 @@ def run_strategy():
                     if buy_signal or sell_signal:
                         print(f"⚠️ {symbol}: сигнал есть, но не достаточно сильный (score={long_score if buy_signal else short_score}) или LSTM не уверен ({lstm_prob:.2%}) – пропускаем.")
 
-            # обновление трейлинг-стопов
             if current_time - last_trailing_update.get('global', 0) > UPDATE_TRAILING_INTERVAL:
                 print("\n🔄 Обновление трейлинг-стопов для всех пар...")
                 for symbol in SYMBOLS:
@@ -145,13 +119,14 @@ def run_strategy():
             print("⏳ Перезапуск цикла через 60 секунд...")
             time.sleep(60)
 
-# ========== ЕДИНОРАЗОВЫЙ СТАРТ ==========
 def start_all():
-    # 1. запускаем фоновое обучение (не блокирует Flask)
+    # 1. скачиваем веса из GitHub
+    download_weights()
+    # 2. запускаем фоновое дообучение
     threading.Thread(target=background_trainer, daemon=True).start()
-    # 2. запускаем торговлю
+    # 3. торговля
     threading.Thread(target=run_strategy, daemon=True).start()
-    # 3. keep-alive
+    # 4. keep-alive
     threading.Thread(target=keep_alive, daemon=True).start()
     print("🚀 trading + background training + keep-alive loops started")
 
