@@ -1,4 +1,4 @@
-# main.py — Quantum Edge AI Bot v8.0 — ГАРАНТИРОВАННО РАБОТАЕТ НА RENDER.COM
+# main.py — Quantum Edge AI Bot v8.1 — ГАРАНТИРОВАННО РАБОТАЕТ НА RENDER.COM
 from flask import Flask
 import threading
 import time
@@ -9,7 +9,7 @@ from strategy import calculate_strategy_signals
 from trader import BingXTrader
 from lstm_model import LSTMPredictor
 
-# ✅ ЗАМЕНИЛИ print() на logging — для Render.com
+# Настройка логирования
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -36,7 +36,7 @@ TIMEFRAME = '1h'
 LOOKBACK = 200
 SIGNAL_COOLDOWN = 3600
 UPDATE_TRAILING_INTERVAL = 300
-TEST_INTERVAL = 86400  # ✅ ИСПРАВИЛ: 300 секунд — это 5 минут! Нужно 24 часа = 86400
+TEST_INTERVAL = 86400  # ✅ 24 часа
 
 lstm_models = {}
 traders = {}
@@ -80,7 +80,7 @@ def run_strategy():
                 if current_time - last_time < SIGNAL_COOLDOWN:
                     logging.info(f"⏳ Кулдаун: {symbol} — пропускаем")
                     continue
-                lstm_prob = lstm_models[symbol].predict_next(df, symbol)  # ← УЖЕ ПРАВИЛЬНО!
+                lstm_prob = lstm_models[symbol].predict_next(df, symbol)
                 lstm_confident = lstm_prob > LSTM_CONFIDENCE
                 logging.info(f"🧠 LSTM: {symbol} — {lstm_prob:.2%} → {'✅ ДОПУСТИМ' if lstm_confident else '❌ ОТКЛОНЕНО'}")
                 strong_strategy = (buy_signal and long_score >= 5) or (sell_signal and short_score >= 5)
@@ -121,7 +121,7 @@ def run_strategy():
                 traders[test_symbol].place_order(
                     side='buy',
                     amount=0.001,
-                    stop_loss_percent=0,  # ✅ ТЕСТОВЫЙ ОРДЕР — БЕЗ TP/SL!
+                    stop_loss_percent=0,
                     take_profit_percent=0
                 )
                 last_test_order = current_time
