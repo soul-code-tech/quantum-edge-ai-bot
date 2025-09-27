@@ -1,4 +1,4 @@
-# main.py — Quantum Edge AI Bot v9.0 — ФИНАЛЬНАЯ РАБОЧАЯ ВЕРСИЯ
+# main.py — Quantum Edge AI Bot v9.1 — РАБОТАЕТ НА RENDER.COM
 from flask import Flask
 import threading
 import time
@@ -29,14 +29,13 @@ RISK_PERCENT = 1.0
 STOP_LOSS_PCT = 1.5
 TAKE_PROFIT_PCT = 3.0
 TRAILING_PCT = 1.0
-LSTM_CONFIDENCE = 0.50  # ✅ Теперь 50%
+LSTM_CONFIDENCE = 0.50
 TIMEFRAME = '1h'
-LOOKBACK = 50  # ✅ Уменьшено для совместимости с BingX
+LOOKBACK = 50
 SIGNAL_COOLDOWN = 3600
 UPDATE_TRAILING_INTERVAL = 300
-TEST_INTERVAL = 86400  # 24 часа
-
-LSTM_TRAIN_DELAY = 600  # 10 минут
+TEST_INTERVAL = 86400
+LSTM_TRAIN_DELAY = 600
 MONITORING_CYCLE = 60
 
 lstm_models = {}
@@ -64,7 +63,6 @@ last_lstm_train_time = 0
 last_lstm_next_symbol_index = 0
 total_trades = 0
 
-# ✅ Первое обучение
 logging.info(f"\n🔄 [СТАРТ] Обучение первой пары при запуске: {SYMBOLS[0]}")
 df = get_bars(SYMBOLS[0], TIMEFRAME, LOOKBACK)
 if df is not None and len(df) >= 50:
@@ -85,25 +83,19 @@ def run_strategy():
         try:
             current_time = time.time()
 
-            # ✅ Обучение по цепочке — каждые 10 минут
             if current_time - last_lstm_train_time >= LSTM_TRAIN_DELAY:
                 symbol = SYMBOLS[last_lstm_next_symbol_index]
                 logging.info(f"\n🔄 [LSTM] Обучение: {symbol} (по расписанию)")
                 df = get_bars(symbol, TIMEFRAME, LOOKBACK)
                 if df is not None and len(df) >= 50:
                     df = calculate_strategy_signals(df, 60)
-                    try:
-                        lstm_models[symbol].train(df, symbol)
-                        logging.info(f"✅ {symbol}: LSTM обучена и сохранена!")
-                        last_lstm_train_time = current_time
-                        last_lstm_next_symbol_index = (last_lstm_next_symbol_index + 1) % len(SYMBOLS)
-                    except Exception as e:
-                        logging.warning(f"⚠️ {symbol}: Ошибка обучения — {e}")
+                    lstm_models[symbol].train(df, symbol)
                 else:
                     logging.warning(f"⚠️ {symbol}: Недостаточно данных для обучения")
+                last_lstm_train_time = current_time
+                last_lstm_next_symbol_index = (last_lstm_next_symbol_index + 1) % len(SYMBOLS)
 
-            # ✅ Мониторинг всех пар
-            for symbol in SYMBOLS:
+            for i, symbol in enumerate(SYMBOLS):
                 logging.info(f"\n--- [{time.strftime('%H:%M:%S')}] {symbol} ---")
                 time.sleep(10)
 
@@ -127,32 +119,21 @@ def run_strategy():
                 lstm_confident = lstm_prob > LSTM_CONFIDENCE
                 logging.info(f"🧠 LSTM: {symbol} — {lstm_prob:.2%} → {'✅ ДОПУСТИМ' if lstm_confident else '❌ ОТКЛОНЕНО'}")
 
-                # ✅ Упрощаем стратегию: score >= 4 достаточно
                 strong_strategy = (buy_signal and long_score >= 4) or (sell_signal and short_score >= 4)
                 if strong_strategy and lstm_confident:
                     side = 'buy' if buy_signal else 'sell'
                     logging.info(f"🎯 [СИГНАЛ] {side.upper()} на {symbol}")
-
                     atr = df['atr'].iloc[-1]
                     equity = 100.0
                     risk_amount = equity * (RISK_PERCENT / 100)
                     stop_distance = atr * 1.5
                     amount = risk_amount / stop_distance if stop_distance > 0 else 0.001
-
                     min_qty = traders[symbol].get_min_order_size()
                     if amount < min_qty:
                         amount = min_qty
                         logging.warning(f"⚠️ {symbol}: Размер ордера увеличен до минимального: {min_qty}")
-
                     logging.info(f"📊 Размер позиции: {amount:.6f} | ATR: {atr:.4f}")
-
-                    order = traders[symbol].place_order(
-                        side=side,
-                        amount=amount,
-                        stop_loss_percent=STOP_LOSS_PCT,
-                        take_profit_percent=TAKE_PROFIT_PCT
-                    )
-
+                    order = traders[symbol].place_order(side, amount, STOP_LOSS_PCT, TAKE_PROFIT_PCT)
                     if order:
                         logging.info(f"✅ УСПЕХ! Ордер {side} на {symbol} отправлен.")
                         total_trades += 1
@@ -164,23 +145,16 @@ def run_strategy():
                         score = long_score if buy_signal else short_score
                         logging.warning(f"⚠️ {symbol}: Сигнал есть, но не достаточно сильный (score={score}) или LSTM не уверен ({lstm_prob:.2%}) — пропускаем.")
 
-            # ✅ Обновление трейлинга
             if current_time - last_trailing_update.get('global', 0) > UPDATE_TRAILING_INTERVAL:
                 logging.info("\n🔄 Обновление трейлинг-стопов для всех пар...")
                 for symbol in SYMBOLS:
                     traders[symbol].update_trailing_stop()
                 last_trailing_update['global'] = current_time
 
-            # ✅ Тестовый ордер
             if current_time - last_test_order > TEST_INTERVAL:
                 test_symbol = SYMBOLS[0]
                 logging.info(f"\n🎯 [ТЕСТ] Принудительный MARKET BUY на {test_symbol} (раз в 24 часа)")
-                traders[test_symbol].place_order(
-                    side='buy',
-                    amount=0.001,
-                    stop_loss_percent=0,
-                    take_profit_percent=0
-                )
+                traders[test_symbol].place_order('buy', 0.001, 0, 0)
                 last_test_order = current_time
 
             logging.info("\n💤 Ждём 60 секунд до следующего цикла мониторинга...")
@@ -208,14 +182,7 @@ def wake_up():
 def health_check():
     return "OK", 200
 
-# ✅ Главный поток: сразу запускаем Flask
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     logging.info(f"🌐 Flask сервер запущен на порту {port}")
-    
-    # ✅ Запускаем фоновый бот
-    thread = threading.Thread(target=run_strategy, daemon=True)
-    thread.start()
-    
-    # ✅ Запускаем Flask — важно: без задержек!
     app.run(host='0.0.0.0', port=port)
