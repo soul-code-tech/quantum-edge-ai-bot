@@ -27,17 +27,11 @@ class BingXTrader:
     # ----------  leverage  ----------
     def _set_leverage(self, leverage: int, side: str = "LONG"):
         try:
-            symbol_for_api = self.symbol.replace('-', '')
-            resp = self.exchange.privatePostLinearSwapApiV1TradingSetLeverage({
-                'symbol': symbol_for_api,
-                'side': side,
-                'leverage': str(leverage)
-            })
-            if resp.get('code') == 0:
-                print(f"✅ {self.symbol}: leverage set to {leverage}x {side}")
-            else:
-                print(f"❌ leverage error: {resp.get('msg')}")
-        except Exception as e:
+            sym = self.symbol.replace("-", "")
+            # ccxt 4.x использует unified-метод
+            self.exchange.set_leverage(leverage, symbol=sym, params={'side': side})
+            print(f"✅ {self.symbol}: leverage set to {leverage}x {side}")
+    except Exception as e:
             print(f"⚠️ could not set leverage for {self.symbol}: {e}")
 
     # ----------  place order  ----------
