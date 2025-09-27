@@ -1,4 +1,3 @@
-# main.py
 from flask import Flask
 import threading
 import time
@@ -28,17 +27,15 @@ LOOKBACK = 200
 SIGNAL_COOLDOWN = 3600
 UPDATE_TRAILING_INTERVAL = 300
 
+# --- ИНИЦИАЛИЗАЦИЯ БЕЗ ОБУЧЕНИЯ ---
 lstm_models = {}
 traders = {}
-for s in SYMBOLS:
-    lstm_models[s] = LSTMPredictor()
-    traders[s] = BingXTrader(symbol=s, use_demo=True, leverage=10)
+
+print("✅ [СТАРТ] Quantum Edge AI Bot запущен на", len(SYMBOLS), "парах")
 
 last_signal_time = {}
 last_trailing_update = {}
 total_trades = 0
-
-print("✅ [СТАРТ] Quantum Edge AI Bot запущен на", len(SYMBOLS), "парах")
 
 def keep_alive():
     host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
@@ -54,6 +51,23 @@ def keep_alive():
 
 def run_strategy():
     global last_signal_time, last_trailing_update, total_trades
+
+    # --- ЗАГРУЗКА МОДЕЛЕЙ И ТРЕЙДЕРОВ ---
+    print("🔄 Загружаем модели и инициализируем трейдеров...")
+    for symbol in SYMBOLS:
+        model = load_model(symbol)
+        if model:
+            lstm_models[symbol] = model
+            print(f"✅ Модель для {symbol} загружена.")
+        else:
+            print(f"❌ Модель для {symbol} не найдена. Используем пустую, но обучение должно было пройти.")
+            lstm_models[symbol] = LSTMPredictor()
+    
+    for symbol in SYMBOLS:
+        traders[symbol] = BingXTrader(symbol=symbol, use_demo=False, leverage=10)  # ! use_demo=False
+
+    print("🚀 Торговый цикл запущен.")
+
     while True:
         try:
             current_time = time.time()
@@ -75,7 +89,12 @@ def run_strategy():
                     print(f"⏳ Кулдаун: {symbol} – пропускаем")
                     continue
 
+                # --- ПРОВЕРКА ОБУЧЕННОСТИ МОДЕЛИ ---
                 model = lstm_models[symbol]
+                if not model.is_trained:
+                    print(f"⚠️ Модель для {symbol} не обучена. Пропускаем.")
+                    continue
+
                 lstm_prob = model.predict_next(df)
                 lstm_confident = lstm_prob > LSTM_CONFIDENCE
                 print(f"🧠 LSTM: {symbol} – {lstm_prob:.2%} → {'✅ ДОПУСТИМ' if lstm_confident else '❌ ОТКЛОНЕНО'}")
@@ -122,12 +141,9 @@ def run_strategy():
             time.sleep(60)
 
 def start_all():
-    # 1. одна попытка обучить всех
+    # 1. Последовательное первичное обучение (один раз)
     initial_train_all(SYMBOLS)
-    # 2. загружаем модели
-    for s in SYMBOLS:
-        lstm_models[s] = load_model(s) or LSTMPredictor()
-    # 3. фоновые потоки
+    # 2. Запуск фоновых задач: торговля, дообучение, keep-alive
     threading.Thread(target=run_strategy, daemon=True).start()
     threading.Thread(target=sequential_trainer, args=(SYMBOLS, 600), daemon=True).start()
     threading.Thread(target=keep_alive, daemon=True).start()
@@ -142,7 +158,7 @@ def health_check():
     return "OK", 200
 
 if __name__ == "__main__":
-    # обучаемся и поднимаем фоновые задачи в отдельном потоке
+    # Запускаем обучение и фоновые задачи в отдельном потоке
     threading.Thread(target=start_all, daemon=True).start()
     port = int(os.environ.get("PORT", 10000))
     print(f"🌐 Flask server starting on port {port}")
