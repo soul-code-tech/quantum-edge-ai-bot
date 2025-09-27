@@ -1,4 +1,4 @@
-# trader.py — Quantum Edge AI Bot: BingXTrader
+# trader.py — ИСПРАВЛЕННЫЙ
 import ccxt
 import os
 from dotenv import load_dotenv
@@ -12,7 +12,6 @@ class BingXTrader:
         self.leverage = leverage
         self.trailing_distance_percent = 1.0
 
-        # Инициализация биржи
         self.exchange = ccxt.bingx({
             'apiKey': os.getenv('BINGX_API_KEY'),
             'secret': os.getenv('BINGX_SECRET_KEY'),
@@ -29,7 +28,6 @@ class BingXTrader:
         self.take_profit_price = None
 
     def _set_leverage(self, leverage):
-        """Устанавливает плечо через новый API v2"""
         try:
             symbol_for_api = self.symbol.replace('-', '')
             response = self.exchange.private_post_swap_v2_trade_leverage({
@@ -43,60 +41,15 @@ class BingXTrader:
                 msg = response.get('msg', 'unknown error')
                 print(f"❌ Ошибка установки плеча: {msg}")
         except Exception as e:
-            print(f"⚠️ Не удалось установить плечо для {self.symbol}: {e}")
-
-    def get_min_order_size(self):
-        try:
-            markets = self.exchange.fetch_markets()
-            for market in markets:
-                if market['symbol'] == self.symbol:
-                    min_qty = market['limits']['amount']['min']
-                    if min_qty is None:
-                        return 0.001
-                    return min_qty
-            return 0.001
-        except Exception as e:
-            print(f"⚠️ Не удалось получить minQty для {self.symbol}: {e}")
-            return 0.001
-
-    def get_best_price(self, side):
-        ticker = self.exchange.fetch_ticker(self.symbol)
-        return ticker['bid'] if side == 'buy' else ticker['ask']
-
-    def fetch_with_retry(self, func, max_retries=3, delay=2, backoff=1.5):
-        base_urls = [
-            'https://open-api.bingx.com',
-            'https://open-api.bingx.io'
-        ]
-        for attempt in range(max_retries):
-            for base_url in base_urls:
-                try:
-                    new_exchange = ccxt.bingx({
-                        'apiKey': os.getenv('BINGX_API_KEY'),
-                        'secret': os.getenv('BINGX_SECRET_KEY'),
-                        'options': {'defaultType': 'swap', 'baseUrl': base_url},
-                        'enableRateLimit': True,
-                        'headers': {'User-Agent': 'QuantumEdgeAI-Bot/1.0'}
-                    })
-                    result = func(new_exchange)
-                    self.exchange = new_exchange
-                    return result
-                except Exception as e:
-                    if attempt == max_retries - 1 and base_url == base_urls[-1]:
-                        raise Exception(f"❌ Все домены исчерпаны: {e}")
-                    wait_time = delay * (backoff ** attempt) + random.uniform(0, 1)
-                    print(f"⚠️ Ошибка подключения: {e}. Повтор через {wait_time:.1f} сек. (попытка {attempt+1}/{max_retries})")
-                    time.sleep(wait_time)
-                    break
+            print(f"⚠️ Не удалось установить плечо: {e}")
 
     def place_order(self, side, amount, stop_loss_percent=1.5, take_profit_percent=3.0):
         try:
             markets = self.exchange.fetch_markets()
             for m in markets:
-                if m['symbol'] == self.symbol:
-                    if m['info'].get('status') != 'TRADING':
-                        print(f"🚫 {self.symbol} — торговля заблокирована. Пропускаем.")
-                        return None
+                if m['symbol'] == self.symbol and m['info'].get('status') != 'TRADING':
+                    print(f"🚫 {self.symbol} — торговля заблокирована. Пропускаем.")
+                    return None
 
             print(f"📤 Отправка рыночного ордера: {side} {amount}")
             market_order = self.exchange.create_order(
@@ -108,10 +61,7 @@ class BingXTrader:
             order_id = market_order.get('id', 'N/A')
             print(f"✅ Рыночный ордер исполнен: {order_id}")
 
-            def fetch_ticker_safe(exchange):
-                return exchange.fetch_ticker(self.symbol)
-
-            ticker = self.fetch_with_retry(fetch_ticker_safe)
+            ticker = self.exchange.fetch_ticker(self.symbol)
             entry_price = ticker['last']
 
             commission_rate = 0.00075
@@ -188,19 +138,21 @@ class BingXTrader:
     def update_trailing_stop(self):
         if not self.position:
             return
-        def fetch_ticker_safe(exchange):
-            return exchange.fetch_ticker(self.symbol)
-        current_price = self.fetch_with_retry(fetch_ticker_safe)['last']
-        side = self.position['side']
-        new_trailing_price = None
-        if side == 'buy':
-            new_trailing_price = current_price * (1 - self.trailing_distance_percent / 100)
-            if new_trailing_price > self.trailing_stop_price:
-                self.trailing_stop_price = new_trailing_price
-                print(f"📈 {self.symbol}: Трейлинг-стоп обновлён до {self.trailing_stop_price:.2f}")
-        else:
-            new_trailing_price = current_price * (1 + self.trailing_distance_percent / 100)
-            if new_trailing_price < self.trailing_stop_price:
-                self.trailing_stop_price = new_trailing_price
-                print(f"📉 {self.symbol}: Трейлинг-стоп обновлён до {self.trailing_stop_price:.2f}")
-        self.position['last_trailing_price'] = current_price
+        try:
+            ticker = self.exchange.fetch_ticker(self.symbol)
+            current_price = ticker['last']
+            side = self.position['side']
+            new_trailing_price = None
+            if side == 'buy':
+                new_trailing_price = current_price * (1 - self.trailing_distance_percent / 100)
+                if new_trailing_price > self.trailing_stop_price:
+                    self.trailing_stop_price = new_trailing_price
+                    print(f"📈 {self.symbol}: Трейлинг-стоп обновлён до {self.trailing_stop_price:.2f}")
+            else:
+                new_trailing_price = current_price * (1 + self.trailing_distance_percent / 100)
+                if new_trailing_price < self.trailing_stop_price:
+                    self.trailing_stop_price = new_trailing_price
+                    print(f"📉 {self.symbol}: Трейлинг-стоп обновлён до {self.trailing_stop_price:.2f}")
+            self.position['last_trailing_price'] = current_price
+        except Exception as e:
+            print(f"⚠️ {self.symbol}: Ошибка обновления трейлинга: {e}")
