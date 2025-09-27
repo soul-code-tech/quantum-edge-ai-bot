@@ -40,7 +40,6 @@ total_trades = 0
 
 print("✅ [СТАРТ] Quantum Edge AI Bot запущен на", len(SYMBOLS), "парах")
 
-# ---------  keep-alive для Render  ---------
 def keep_alive():
     host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
     if not host:
@@ -53,7 +52,6 @@ def keep_alive():
             pass
         time.sleep(120)
 
-# ---------  торговый цикл  ---------
 def run_strategy():
     global last_signal_time, last_trailing_update, total_trades
     while True:
@@ -110,7 +108,6 @@ def run_strategy():
                     if buy_signal or sell_signal:
                         print(f"⚠️ {symbol}: сигнал есть, но не достаточно сильный (score={long_score if buy_signal else short_score}) или LSTM не уверен ({lstm_prob:.2%}) – пропускаем.")
 
-            # обновление трейлинг-стопов
             if current_time - last_trailing_update.get('global', 0) > UPDATE_TRAILING_INTERVAL:
                 print("\n🔄 Обновление трейлинг-стопов для всех пар...")
                 for symbol in SYMBOLS:
@@ -124,14 +121,13 @@ def run_strategy():
             print("⏳ Перезапуск цикла через 60 секунд...")
             time.sleep(60)
 
-# ==========  ЕДИНОРАЗОВЫЙ СТАРТ (фон)  ==========
 def start_all():
-    # 1. строго последовательное обучение ВСЕХ пар
+    # 1. одна попытка обучить всех
     initial_train_all(SYMBOLS)
-    # 2. загружаем готовые модели
+    # 2. загружаем модели
     for s in SYMBOLS:
         lstm_models[s] = load_model(s) or LSTMPredictor()
-    # 3. потоки: торговля + дообучение раз в 10 мин + keep-alive
+    # 3. фоновые потоки
     threading.Thread(target=run_strategy, daemon=True).start()
     threading.Thread(target=sequential_trainer, args=(SYMBOLS, 600), daemon=True).start()
     threading.Thread(target=keep_alive, daemon=True).start()
@@ -146,7 +142,7 @@ def health_check():
     return "OK", 200
 
 if __name__ == "__main__":
-    # обучение и все фоновые задачи – в отдельном потоке
+    # обучаемся и поднимаем фоновые задачи в отдельном потоке
     threading.Thread(target=start_all, daemon=True).start()
     port = int(os.environ.get("PORT", 10000))
     print(f"🌐 Flask server starting on port {port}")
