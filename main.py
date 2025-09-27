@@ -68,7 +68,7 @@ def run_strategy():
                 if current_time - last_time < SIGNAL_COOLDOWN:
                     print(f"⏳ Кулдаун: {symbol} — пропускаем")
                     continue
-                lstm_prob = lstm_models[symbol].predict_next(df)
+                lstm_prob = lstm_models[symbol].predict_next(df, symbol)  # ← ДОБАВЬТЕ symbol!
                 lstm_confident = lstm_prob > LSTM_CONFIDENCE
                 print(f"🧠 LSTM: {symbol} — {lstm_prob:.2%} → {'✅ ДОПУСТИМ' if lstm_confident else '❌ ОТКЛОНЕНО'}")
                 strong_strategy = (buy_signal and long_score >= 5) or (sell_signal and short_score >= 5)
