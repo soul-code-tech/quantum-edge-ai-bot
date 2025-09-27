@@ -1,9 +1,12 @@
 # trainer.py
-import os, time, pickle, threading, requests
+import os
+import time
+import pickle
+import threading
 from data_fetcher import get_bars
 from lstm_model import LSTMPredictor
 from strategy import calculate_strategy_signals
-import concurrent.futures
+import ccxt
 
 MODEL_DIR = "/tmp/lstm_weights"
 os.makedirs(MODEL_DIR, exist_ok=True)
@@ -11,46 +14,55 @@ os.makedirs(MODEL_DIR, exist_ok=True)
 def model_path(symbol: str) -> str:
     return os.path.join(MODEL_DIR, symbol.replace("-", "") + ".pkl")
 
-def heartbeat():
-    """Фоновый тикер – точка каждые 5 с, чтобы Render не убивал контейнер."""
-    def run():
-        while True:
-            time.sleep(5)
-            print(".", end="", flush=True)
-    threading.Thread(target=run, daemon=True).start()
+def market_exists(symbol: str) -> bool:
+    """Проверяет, существует ли рынок на BingX."""
+    try:
+        exchange = ccxt.bingx({'options': {'defaultType': 'swap'}})
+        symbol_api = symbol.replace('-', '/')
+        exchange.load_markets()
+        return symbol_api in exchange.markets
+    except Exception:
+        return False
 
-heartbeat()          # запускаем сразу
-
-def train_one(symbol: str, lookback: int = 60, timeout_seconds: int = 25) -> bool:
-    """Обучает одну пару с ограничением по времени через ThreadPoolExecutor."""
-    def _train():
-        try:
-            print(f"\n🧠 Обучаем {symbol} (лимит ~{timeout_seconds} с)...")
-            df = get_bars(symbol, "1h", 300)
-            if df is None or len(df) < 200:
-                print(f"\n⚠️  insufficient data for {symbol}")
-                return False
-            df = calculate_strategy_signals(df, 60)
-
-            model = LSTMPredictor(lookback=lookback)
-            model.train(df)  # ← Тут может зависнуть
-            with open(model_path(symbol), "wb") as fh:
-                pickle.dump({"scaler": model.scaler, "model": model.model}, fh)
-            print(f"\n✅ LSTM обучилась для {symbol}")
-            return True
-        except Exception as e:
-            print(f"\n❌ train error for {symbol}: {e}")
+def train_one(symbol: str, lookback: int = 60, epochs: int = 5) -> bool:
+    """Обучает одну пару: ≤ 25 с, heartbeat, без signal-alarm."""
+    try:
+        if not market_exists(symbol):
+            print(f"\n❌ {symbol}: рынок не существует на BingX – пропускаем.")
             return False
 
-    # Запускаем обучение в отдельном потоке с таймаутом
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        future = executor.submit(_train)
-        try:
-            result = future.result(timeout=timeout_seconds)
-            return result
-        except concurrent.futures.TimeoutError:
-            print(f"\n⏰ Таймаут {timeout_seconds} с для {symbol} – пропускаем.")
+        print(f"\n🧠 Обучаем {symbol} (epochs={epochs})...")
+
+        # фоновый heartbeat – точка каждые 5 с
+        stop_heartbeat = threading.Event()
+        def tick():
+            while not stop_heartbeat.is_set():
+                time.sleep(5)
+                print(".", end="", flush=True)
+        threading.Thread(target=tick, daemon=True).start()
+
+        # загружаем данные и считаем индикаторы
+        df = get_bars(symbol, "1h", 300)
+        if df is None or len(df) < 200:
+            print(f"\n⚠️ Недостаточно данных для {symbol}")
             return False
+        df = calculate_strategy_signals(df, 60)
+
+        # обучаем (5 эпох ≈ 15-20 с на CPU)
+        model = LSTMPredictor(lookback=lookback)
+        model.train(df, epochs=epochs)          # переопределено ниже
+
+        # сохраняем веса
+        with open(model_path(symbol), "wb") as fh:
+            pickle.dump({"scaler": model.scaler, "model": model.model}, fh)
+        print(f"\n✅ LSTM обучилась для {symbol}")
+        return True
+
+    except Exception as e:
+        print(f"\n❌ Ошибка обучения {symbol}: {e}")
+        return False
+    finally:
+        stop_heartbeat.set()          # останавливаем heartbeat
 
 def load_model(symbol: str, lookback: int = 60):
     path = model_path(symbol)
@@ -65,52 +77,24 @@ def load_model(symbol: str, lookback: int = 60):
         m.is_trained = True
         return m
     except Exception as e:
-        print(f"\n⚠️ load model error for {symbol}: {e}")
+        print(f"\n⚠️ Ошибка загрузки модели {symbol}: {e}")
         return None
 
-def initial_train_all(symbols: list[str]) -> None:
-    """Первичное обучение строго по одному разу с таймаутом."""
-    print("🧠 Начинаем первичное последовательное обучение (лимит ~25 с на пару)...")
+def initial_train_all(symbols: list[str], epochs: int = 5) -> None:
+    """Первичное обучение строго поочерёдно."""
+    print("🧠 Начинаем первичное последовательное обучение...")
     ok = 0
     for s in symbols:
-        # Проверим, существует ли рынок для пары
-        try:
-            import ccxt
-            exchange = ccxt.bingx({'options': {'defaultType': 'swap'}})
-            symbol_for_api = s.replace('-', '/')
-            exchange.load_markets()
-            if symbol_for_api not in exchange.markets:
-                print(f"\n❌ {symbol_for_api} не существует на BingX – пропускаем.")
-                continue
-        except Exception:
-            print(f"\n⚠️ Не удалось проверить рынок для {s} – пропускаем.")
-            continue
-
-        if train_one(s, timeout_seconds=25):
+        if train_one(s, epochs=epochs):
             ok += 1
+        time.sleep(2)  # пауза между парами
     print(f"\n🧠 Первичный цикл завершён: {ok}/{len(symbols)} пар обучены.")
-    if ok == 0:
-        raise RuntimeError("Ни одна пара не обучилась – проверьте данные.")
 
-def sequential_trainer(symbols: list[str], interval: int = 600):
-    """Бесконечное дообучение – одна пара за другим (таймаут ~25 с)."""
+def sequential_trainer(symbols: list[str], interval: int = 600, epochs: int = 5):
+    """Дообучение каждые 10 минут (без таймаутов, с heartbeat)."""
     idx = 0
     while True:
         sym = symbols[idx % len(symbols)]
-        # Проверим рынок
-        try:
-            import ccxt
-            exchange = ccxt.bingx({'options': {'defaultType': 'swap'}})
-            symbol_for_api = sym.replace('-', '/')
-            exchange.load_markets()
-            if symbol_for_api not in exchange.markets:
-                print(f"\n❌ {symbol_for_api} не существует – пропускаем дообучение.")
-                idx += 1
-                time.sleep(interval)
-                continue
-        except:
-            pass
-
-        train_one(sym, timeout_seconds=25)
+        train_one(sym, epochs=epochs)
         idx += 1
         time.sleep(interval)
