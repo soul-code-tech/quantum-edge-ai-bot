@@ -24,14 +24,13 @@ class BingXTrader:
         self.trailing_stop_price = None
         self.trailing_distance_percent = 1.0
 
-    # ----------  leverage  ----------
+    # ----------  leverage (ccxt 4.x unified)  ----------
     def _set_leverage(self, leverage: int, side: str = "LONG"):
         try:
             sym = self.symbol.replace("-", "")
-            # ccxt 4.x использует unified-метод
             self.exchange.set_leverage(leverage, symbol=sym, params={'side': side})
             print(f"✅ {self.symbol}: leverage set to {leverage}x {side}")
-    except Exception as e:
+        except Exception as e:
             print(f"⚠️ could not set leverage for {self.symbol}: {e}")
 
     # ----------  place order  ----------
@@ -47,7 +46,7 @@ class BingXTrader:
             order_id = market_order.get('id', 'N/A')
             print(f"✅ market order filled: {order_id}")
 
-            # установить плечо ТОЛЬКО после успешного маркет-ордера
+            # ставим плечо ТОЛЬКО после успешного маркет-ордера
             self._set_leverage(self.leverage, side.upper())
 
             entry_price = market_order.get('price')
