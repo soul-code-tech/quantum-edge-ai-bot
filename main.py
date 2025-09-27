@@ -23,7 +23,7 @@ _bot_started = False
 
 SYMBOLS = [
     'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT',
-    'XRP-USDT', 'DOGE-USDT', 'TON-USDT', 'AVAX-USDT',
+    'XRP-USDT', 'AVAX-USDT',
     'SHIB-USDT', 'LINK-USDT', 'PENGU-USDT'
 ]
 
