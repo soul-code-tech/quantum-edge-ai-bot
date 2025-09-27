@@ -30,7 +30,7 @@ def calculate_strategy_signals(df, current_res_minutes=60):
     df['long_score'] = df['trend_score'] + df['strong_volume'].astype(int) + (df['rsi'] > 55).astype(int)
     df['short_score'] = (3 - df['trend_score']) + df['strong_volume'].astype(int) + (df['rsi'] < 45).astype(int)
 
-    df['buy_signal'] = df['long_score'] >= 4
-    df['sell_signal'] = df['short_score'] >= 4
+    df['buy_signal'] = (df['long_score'] >= 4)
+    df['sell_signal'] = (df['short_score'] >= 4)
 
     return df
