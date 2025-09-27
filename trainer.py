@@ -1,7 +1,9 @@
 # trainer.py
-import os, time, pickle, logging
+import os, time, pickle
+import pandas as pd
 from data_fetcher import get_bars
 from lstm_model import LSTMPredictor
+from strategy import calculate_strategy_signals   # <-- новый импорт
 
 MODEL_DIR = "/tmp/lstm_weights"
 os.makedirs(MODEL_DIR, exist_ok=True)
@@ -10,14 +12,20 @@ def model_path(symbol: str) -> str:
     return os.path.join(MODEL_DIR, symbol.replace("-", "") + ".pkl")
 
 def train_one(symbol: str, lookback: int = 60) -> bool:
-    """Обучает одну пару и возвращает True, если успешно."""
+    """Обучает одну пару ПОСЛЕ расчёта индикаторов."""
     try:
+        # 1. скачиваем свечи
         df = get_bars(symbol, "1h", 300)
         if df is None or len(df) < 200:
-            logging.warning(f"[train] insufficient data for {symbol}")
+            print(f"⚠️  insufficient data for {symbol}")
             return False
+
+        # 2. добавляем индикаторы (rsi, sma20, atr и т.д.)
+        df = calculate_strategy_signals(df, 60)
+
+        # 3. обучаем LSTM
         model = LSTMPredictor(lookback=lookback)
-        model.train(df)
+        model.train(df)                       # теперь колонки есть
         with open(model_path(symbol), "wb") as fh:
             pickle.dump({"scaler": model.scaler, "model": model.model}, fh)
         print(f"✅ LSTM обучилась для {symbol} – следующая пара!")
