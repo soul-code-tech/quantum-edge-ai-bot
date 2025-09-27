@@ -2,11 +2,11 @@
 import os
 import time
 import pickle
-import threading
 from data_fetcher import get_bars
 from lstm_model import LSTMPredictor
 from strategy import calculate_strategy_signals
 import ccxt
+from download_weights import download_weights   # ← новый импорт
 
 MODEL_DIR = "/tmp/lstm_weights"
 os.makedirs(MODEL_DIR, exist_ok=True)
@@ -15,7 +15,6 @@ def model_path(symbol: str) -> str:
     return os.path.join(MODEL_DIR, symbol.replace("-", "") + ".pkl")
 
 def market_exists(symbol: str) -> bool:
-    """Проверяет, существует ли рынок на BingX."""
     try:
         exchange = ccxt.bingx({'options': {'defaultType': 'swap'}})
         symbol_api = symbol.replace('-', '/')
@@ -25,7 +24,7 @@ def market_exists(symbol: str) -> bool:
         return False
 
 def train_one(symbol: str, lookback: int = 60, epochs: int = 5) -> bool:
-    """Обучает одну пару: ≤ 25 с, heartbeat, без signal-alarm."""
+    """Обучает одну пару: ≤ 25 с, heartbeat точками ВНУТРИ fit."""
     try:
         if not market_exists(symbol):
             print(f"\n❌ {symbol}: рынок не существует на BingX – пропускаем.")
@@ -33,26 +32,15 @@ def train_one(symbol: str, lookback: int = 60, epochs: int = 5) -> bool:
 
         print(f"\n🧠 Обучаем {symbol} (epochs={epochs})...")
 
-        # фоновый heartbeat – точка каждые 5 с
-        stop_heartbeat = threading.Event()
-        def tick():
-            while not stop_heartbeat.is_set():
-                time.sleep(5)
-                print(".", end="", flush=True)
-        threading.Thread(target=tick, daemon=True).start()
-
-        # загружаем данные и считаем индикаторы
         df = get_bars(symbol, "1h", 300)
         if df is None or len(df) < 200:
             print(f"\n⚠️ Недостаточно данных для {symbol}")
             return False
         df = calculate_strategy_signals(df, 60)
 
-        # обучаем (5 эпох ≈ 15-20 с на CPU)
         model = LSTMPredictor(lookback=lookback)
-        model.train(df, epochs=epochs)          # переопределено ниже
+        model.train(df, epochs=epochs)          # внутри есть print-ы → точки идут
 
-        # сохраняем веса
         with open(model_path(symbol), "wb") as fh:
             pickle.dump({"scaler": model.scaler, "model": model.model}, fh)
         print(f"\n✅ LSTM обучилась для {symbol}")
@@ -61,8 +49,6 @@ def train_one(symbol: str, lookback: int = 60, epochs: int = 5) -> bool:
     except Exception as e:
         print(f"\n❌ Ошибка обучения {symbol}: {e}")
         return False
-    finally:
-        stop_heartbeat.set()          # останавливаем heartbeat
 
 def load_model(symbol: str, lookback: int = 60):
     path = model_path(symbol)
@@ -80,21 +66,36 @@ def load_model(symbol: str, lookback: int = 60):
         print(f"\n⚠️ Ошибка загрузки модели {symbol}: {e}")
         return None
 
-def initial_train_all(symbols: list[str], epochs: int = 5) -> None:
-    """Первичное обучение строго поочерёдно."""
-    print("🧠 Начинаем первичное последовательное обучение...")
+def initial_train_all(symbols, epochs=5):
+    """Сначала качаем веса из GitHub, потом доучиваем недостающие."""
+    download_weights()                            # ← новая строка
+    print("🧠 Проверяем обученные пары...")
     ok = 0
     for s in symbols:
-        if train_one(s, epochs=epochs):
+        if os.path.exists(model_path(s)):
+            print(f"✅ {s} загружена из кэша")
             ok += 1
-        time.sleep(2)  # пауза между парами
+        else:
+            print(f"🧠 Обучаем {s}...")
+            if train_one(s, epochs=epochs):
+                ok += 1
+        # живой вывод между парами (без потоков)
+        print(">", end="", flush=True)
+        for _ in range(4):          # 4 × 0.5 с = 2 с
+            time.sleep(0.5)
+            print(">", end="", flush=True)
+        print()
     print(f"\n🧠 Первичный цикл завершён: {ok}/{len(symbols)} пар обучены.")
 
-def sequential_trainer(symbols: list[str], interval: int = 600, epochs: int = 5):
-    """Дообучение каждые 10 минут (без таймаутов, с heartbeat)."""
+def sequential_trainer(symbols, interval=600, epochs=5):
+    """Дообучение раз в 10 минут (живой вывод внутри)."""
     idx = 0
     while True:
         sym = symbols[idx % len(symbols)]
         train_one(sym, epochs=epochs)
         idx += 1
-        time.sleep(interval)
+        # «живая» задержка 10 мин (каждые 30 с выводим «.»)
+        for _ in range(20):        # 20 × 30 с = 600 с
+            time.sleep(30)
+            print(".", end="", flush=True)
+        print()                    # перевод строки после интервала
