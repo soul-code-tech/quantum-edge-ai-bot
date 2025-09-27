@@ -13,7 +13,7 @@ app = Flask(__name__)
 
 SYMBOLS = [
     'BTC-USDT', 'ETH-USDT', 'BNB-USDT',
-    'XRP-USDT', 'DOGE-USDT', 'AVAX-USDT',
+     'DOGE-USDT', 'AVAX-USDT','XRP-USDT',
     'SHIB-USDT', 'LINK-USDT', 'PENGU-USDT', 'SOL-USDT' 
 ]
 
