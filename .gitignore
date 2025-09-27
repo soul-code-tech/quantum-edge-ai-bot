@@ -1,6 +1,6 @@
-.env
+.venv/
 __pycache__/
 *.pyc
-.venv/
-venv/
+.env
+models/*.keras
 .DS_Store
