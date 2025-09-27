@@ -5,7 +5,7 @@ import zipfile
 import shutil
 
 WEIGHTS_DIR = "/tmp/lstm_weights"
-REPO = "https://github.com/YOUR_USER/YOUR_REPO"   # ← замените на своё
+REPO = "https://github.com/soul-code-tech/quantum-edge-ai-bot/edit/main/download_weights.py"   # ← замените на своё
 BRANCH = "weights"
 ZIP_URL = f"{REPO}/archive/refs/heads/{BRANCH}.zip"
 
