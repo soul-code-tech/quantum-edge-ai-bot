@@ -90,9 +90,11 @@ def save_weights_to_github(symbol: str):
         subprocess.run(["git", "add", "weights/"], check=True)
         subprocess.run(["git", "commit", "-m", f"update {symbol} weights"], check=True)
 
+        # --- ключевое: fetch + force ---
+        subprocess.run(["git", "fetch", "origin", "weights"], check=False)
         for attempt in range(1, 4):
             try:
-                subprocess.run(["git", "push", "--force-with-lease", "origin", "weights"], check=True)
+                subprocess.run(["git", "push", "--force", "origin", "weights"], check=True)
                 print(f"✅ Веса {symbol} отправлены в GitHub.")
                 return
             except subprocess.CalledProcessError as e:
