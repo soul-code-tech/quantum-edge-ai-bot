@@ -18,12 +18,10 @@ JSON_FILE = "pnl_history.json"
 # ------------------------------------------------------------------
 # 1. Загружаем закрытые сделки (reduceOnly = наши TP/SL)
 # ------------------------------------------------------------------
+# pnl_monitor.py  (заменяем fetch_closed_pnl)
 def fetch_closed_pnl(api_key, secret, use_demo=False):
     """
-    BingX НЕ имеет fetch_income(), поэтому:
-    1. берём fetch_my_trades() за последние 7 дней
-    2. фильтруем reduceOnly = True (наши выходы)
-    3. считаем PnL как (sell_price - buy_price) * amount
+    Берём fetch_my_trades() ПО СИМВОЛУ и фильтруем reduceOnly = True
     """
     try:
         exchange = ccxt.bingx({
@@ -36,10 +34,18 @@ def fetch_closed_pnl(api_key, secret, use_demo=False):
             exchange.set_sandbox_mode(True)
 
         since = exchange.parse8601((datetime.utcnow() - timedelta(days=7)).isoformat())
-        trades = exchange.fetch_my_trades(since=since)
+        all_trades = []
 
-        # оставляем только reduceOnly = наши выходы
-        df = pd.DataFrame([t for t in trades if t.get('info', {}).get('reduceOnly') is True])
+        # ходим по каждому символу (можно оптимизировать, но 7 дней — мало)
+        from main import SYMBOLS
+        for sym in SYMBOLS:
+            try:
+                trades = exchange.fetch_my_trades(sym, since=since)
+                all_trades.extend([t for t in trades if t.get('info', {}).get('reduceOnly') is True])
+            except Exception as e:
+                logger.warning(f"Нет trades {sym}: {e}")
+
+        df = pd.DataFrame(all_trades)
         if df.empty:
             return pd.DataFrame(columns=['timestamp', 'symbol', 'income', 'balance'])
 
@@ -55,7 +61,6 @@ def fetch_closed_pnl(api_key, secret, use_demo=False):
     except Exception as e:
         logger.error(f"fetch_closed_pnl: {e}")
         return pd.DataFrame()
-
 
 # ------------------------------------------------------------------
 # 2. Считаем equity & drawdown
