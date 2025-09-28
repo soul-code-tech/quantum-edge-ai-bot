@@ -7,13 +7,10 @@ from dotenv import load_dotenv
 load_dotenv()
 logger = logging.getLogger("bot")
 
-# ----------- Kelly и риск -----------
-KELLY_FRACTION = 0.25            # начнём с консервативной доли Kelly
-MAX_POSITIONS = 3                # не держим > 3 монет одновременно
-MAKER_FEE = 0.0002               # BingX maker rebate ≈ 0,02 %
-SLIP_BUFFER = 0.0005             # 0,05 % «подтираем» цену, чтобы 100 % попасть в мейкер
+KELLY_FRACTION = 0.25
+MAX_POSITIONS = 3
+SLIP_BUFFER = 0.0005          # 0,05 % «подтираем» цену, чтобы 100 % попасть в мейкер
 
-# ----------- минимальные лоты -----------
 MIN_LOTS = {
     'BTC-USDT': 0.001,
     'ETH-USDT': 0.001,
@@ -76,7 +73,6 @@ class BingXTrader:
 
             self.exchange.set_leverage(self.leverage, symbol=self.symbol.replace('-', ''))
 
-            # стоп и тейк
             if side == 'buy':
                 stop_price = limit_price * (1 - sl_pct / 100)
                 tp_price = limit_price * (1 + tp_pct / 100)
@@ -103,13 +99,14 @@ class BingXTrader:
             )
 
             logger.info(f"✅ Позиция открыта: {side} {amount} {self.symbol}")
-            return {
+            self.position = {
                 'side': side,
                 'entry': limit_price,
                 'amount': amount,
                 'stop': stop_price,
                 'tp': tp_price
             }
+            return self.position
 
         except Exception as e:
             logger.error(f"Ошибка входа {self.symbol}: {e}")
