@@ -5,7 +5,7 @@ import pickle
 import subprocess
 import logging
 from datetime import timedelta
-from data_fetcher import get_bars, get_funding_rate
+from data_fetcher import get_bars
 from strategy import calculate_strategy_signals
 from lstm_model import EnsemblePredictor
 import ccxt
@@ -24,9 +24,10 @@ def market_exists(symbol: str) -> bool:
     try:
         exchange = ccxt.bingx({"options": {"defaultType": "swap"}})
         exchange.load_markets()
-        return symbol.replace("-", "") in exchange.markets
+        # ← проверяем ИСХОДНЫЙ тикер с дефисом
+        return symbol in exchange.markets
     except Exception as e:
-        logger.error(f"Проверка рынка {symbol}: {e}")
+        logger.error(f"market_exists {symbol}: {e}")
         return False
 
 def is_model_fresh(symbol: str, max_age_hours: int = 24) -> bool:
@@ -94,7 +95,7 @@ def load_model(symbol: str, lookback: int = 60):
     try:
         with open(path, "rb") as f:
             bundle = pickle.load(f)
-        return bundle["ensemble"]          # возвращаем объект EnsemblePredictor
+        return bundle["ensemble"]          # ← возвращаем объект ensemble
     except Exception as e:
         logger.error(f"Загрузка модели {symbol}: {e}")
         return None
