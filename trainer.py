@@ -20,6 +20,7 @@ REPO_URL = "github.com/soul-code-tech/quantum-edge-ai-bot.git"
 def model_path(symbol: str) -> str:
     return os.path.join(WEIGHTS_DIR, symbol.replace("-", "") + ".pkl")
 
+# trainer.py  (функция market_exists)
 def market_exists(symbol: str) -> bool:
     try:
         exchange = ccxt.bingx({"options": {"defaultType": "swap"}})
