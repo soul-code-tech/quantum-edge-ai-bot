@@ -45,11 +45,6 @@ class BingXTrader:
 
     # ---------- универсальный размер позиции ----------
     def calc_position_size(self, equity: float, entry: float, atr: float, kelly: float = KELLY_FRACTION) -> float:
-        """
-        Kelly-fractional size по ATR-стопу.
-        risk = KellyFraction * equity
-        size = risk / (ATR * 1.5)
-        """
         risk_usd = kelly * equity
         stop_usd = atr * 1.5
         contracts = risk_usd / stop_usd
@@ -58,13 +53,7 @@ class BingXTrader:
 
     # ---------- post-only лимитный вход ----------
     def place_limit_order(self, side: str, amount: float, entry: float, sl_pct: float, tp_pct: float):
-        """
-        1. Ставим limit-ордер чуть выше/ниже рынка (post-only).
-        2. После исполнения — ставим стоп-лимит и тейк-лимит.
-        3. Возвращаем dict с информацией о позиции.
-        """
         try:
-            # цена чуть «лучше» рынка, чтобы 100 % попасть в мейкер
             ticker = self.exchange.fetch_ticker(self.symbol)
             last = float(ticker['last'])
             limit_price = last * (1 - SLIP_BUFFER) if side == 'buy' else last * (1 + SLIP_BUFFER)
@@ -79,18 +68,49 @@ class BingXTrader:
             )
             logger.info(f"POST-ONLY {side} {amount} {self.symbol} @ {limit_price:.4f}")
 
-            # ждём исполнения (или сразу проверяем статус)
             order = self.exchange.fetch_order(order['id'], self.symbol)
             if order['status'] != 'closed':
-                # не исполнился за 5 сек — отменяем, выходим
                 self.exchange.cancel_order(order['id'], self.symbol)
                 logger.info(f"Лимит не исполнен, отмена {self.symbol}")
                 return None
 
-            # ставим плечо
             self.exchange.set_leverage(self.leverage, symbol=self.symbol.replace('-', ''))
 
             # стоп и тейк
             if side == 'buy':
                 stop_price = limit_price * (1 - sl_pct / 100)
-                tp_price = limit_price * (1 + tp_pct /
+                tp_price = limit_price * (1 + tp_pct / 100)
+            else:
+                stop_price = limit_price * (1 + sl_pct / 100)
+                tp_price = limit_price * (1 - tp_pct / 100)
+
+            # стоп-лимит (reduce-only)
+            self.exchange.create_order(
+                symbol=self.symbol,
+                type='stop_market',
+                side='sell' if side == 'buy' else 'buy',
+                amount=amount,
+                params={'stopPrice': stop_price, 'reduceOnly': True}
+            )
+            # тейк-лимит (reduce-only)
+            self.exchange.create_order(
+                symbol=self.symbol,
+                type='limit',
+                side='sell' if side == 'buy' else 'buy',
+                amount=amount,
+                price=tp_price,
+                params={'reduceOnly': True}
+            )
+
+            logger.info(f"✅ Позиция открыта: {side} {amount} {self.symbol}")
+            return {
+                'side': side,
+                'entry': limit_price,
+                'amount': amount,
+                'stop': stop_price,
+                'tp': tp_price
+            }
+
+        except Exception as e:
+            logger.error(f"Ошибка входа {self.symbol}: {e}")
+            return None
