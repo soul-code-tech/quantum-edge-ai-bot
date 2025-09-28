@@ -1,5 +1,5 @@
 # main.py
-from flask import Flask, Blueprint, jsonify, render_template_string   # ← новое
+from flask import Flask, Blueprint, jsonify, render_template_string
 import threading
 import time
 import os
@@ -12,9 +12,8 @@ from trader import BingXTrader
 from lstm_model import EnsemblePredictor
 from trainer import initial_train_all, sequential_trainer, load_model
 from download_weights import download_weights
-from pnl_monitor import pnl_bp, start_pnl_monitor   # ← PnL-график
+from pnl_monitor import PNL_BP, start_pnl_monitor
 
-# ----------- логгер в stdout (Render видит) -----------
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
@@ -22,7 +21,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("bot")
 
-# ----------- настройки без изменений -----------
 SYMBOLS = [
     'BTC-USDT', 'ETH-USDT', 'BNB-USDT', 'SOL-USDT', 'XRP-USDT',
     'ADA-USDT', 'DOGE-USDT', 'DOT-USDT', 'MATIC-USDT', 'LTC-USDT'
@@ -43,51 +41,10 @@ last_signal_time = {}
 total_trades = 0
 equity = 100.0
 
-app = Flask(__name__)   # ← теперь Flask определён
-app.register_blueprint(pnl_bp, url_prefix='/pnl')   # ← PnL-график
-
-# ================== отладочный старт ==================
-def start_all():
-    try:
-        logger.info("=== СТАРТ start_all() ===")
-        logger.info("Скачиваем веса...")
-        download_weights()
-
-        logger.info("Загружаем модели...")
-        to_train = []
-        for s in SYMBOLS:
-            logger.debug(f"Загрузка {s}")
-            model = load_model(s)
-            if model:
-                lstm_models[s] = model
-                traders[s] = BingXTrader(symbol=s, use_demo=True, leverage=3)
-            else:
-                lstm_models[s] = EnsemblePredictor()
-                traders[s] = BingXTrader(symbol=s, use_demo=True, leverage=3)
-                to_train.append(s)
-        logger.info(f"К обучению: {len(to_train)} пар")
-
-        if to_train:
-            initial_train_all(to_train, epochs=5)
-            for s in to_train:
-                lstm_models[s] = load_model(s) or EnsemblePredictor()
-
-        logger.info("Запуск фонового переобучения (24 ч)...")
-        threading.Thread(target=sequential_trainer, args=(SYMBOLS, 3600 * 24, 2), daemon=True).start()
-
-        logger.info("Запуск торговой стратегии...")
-        threading.Thread(target=run_strategy, daemon=True).start()
-
-        threading.Thread(target=keep_alive, daemon=True).start()
-        logger.info("=== start_all() завершён ===")
-
-    except Exception as e:
-        logger.error("КРИТИЧЕСКАЯ ОШИБКА в start_all():")
-        logger.error(traceback.format_exc())
-        raise   # чтобы процесс упал и Render перезапустил контейнер
+app = Flask(__name__)
+app.register_blueprint(PNL_BP, url_prefix='/pnl')
 
 
-# ================== остальное без изменений ==================
 def keep_alive():
     host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
     if not host:
@@ -110,7 +67,7 @@ def run_strategy():
             for symbol in SYMBOLS:
                 if not getattr(lstm_models[symbol], 'is_trained', False):
                     continue
-                if current_time - last_signal_time.get(symbol, 0) < 3600:
+                if current_time - last_signal_time.get(symbol, 0) < SIGNAL_COOLDOWN:
                     continue
 
                 df = get_bars(symbol, TIMEFRAME, LOOKBACK)
@@ -148,8 +105,48 @@ def run_strategy():
             time.sleep(60)
         except Exception as e:
             logger.error(f"Ошибка в run_strategy: {e}")
-            logger.error(traceback.format_exc())
             time.sleep(60)
+
+
+def start_all():
+    try:
+        logger.info("=== СТАРТ start_all() ===")
+        logger.info("Скачиваем веса...")
+        download_weights()
+
+        logger.info("Загружаем модели...")
+        to_train = []
+        for s in SYMBOLS:
+            logger.debug(f"Загрузка {s}")
+            model = load_model(s)
+            if model:
+                lstm_models[s] = model
+                traders[s] = BingXTrader(symbol=s, use_demo=True, leverage=3)
+            else:
+                lstm_models[s] = EnsemblePredictor()
+                traders[s] = BingXTrader(symbol=s, use_demo=True, leverage=3)
+                to_train.append(s)
+        logger.info(f"К обучению: {len(to_train)} пар")
+
+        if to_train:
+            initial_train_all(to_train, epochs=5)
+            for s in to_train:
+                lstm_models[s] = load_model(s) or EnsemblePredictor()
+
+        logger.info("Запуск фонового переобучения (24 ч)...")
+        threading.Thread(target=sequential_trainer, args=(SYMBOLS, 3600 * 24, 2), daemon=True).start()
+
+        logger.info("Запуск торговой стратегии...")
+        threading.Thread(target=run_strategy, daemon=True).start()
+
+        start_pnl_monitor()   # ← PnL-график
+        threading.Thread(target=keep_alive, daemon=True).start()
+        logger.info("=== start_all() завершён ===")
+
+    except Exception as e:
+        logger.error("КРИТИЧЕСКАЯ ОШИБКА в start_all():")
+        logger.error(traceback.format_exc())
+        raise
 
 
 @app.route('/')
@@ -164,7 +161,6 @@ def health_check():
 
 
 if __name__ == "__main__":
-    # запускаем start_all в отдельном потоке, чтобы Flask не блокировался
     threading.Thread(target=start_all, daemon=True).start()
     port = int(os.environ.get("PORT", 10000))
     logger.info(f"🌐 Flask server starting on port {port}")
