@@ -3,143 +3,132 @@ import os
 import time
 import pickle
 import subprocess
-import shutil
+import logging
+from datetime import datetime, timedelta
 from data_fetcher import get_bars
 from strategy import calculate_strategy_signals
 from lstm_model import LSTMPredictor
 import ccxt
 
-MODEL_DIR = "/tmp/lstm_weights"
-os.makedirs(MODEL_DIR, exist_ok=True)
+logger = logging.getLogger("bot")
 
-REPO_ROOT   = os.path.dirname(os.path.abspath(__file__))
-WEIGHTS_DIR = os.path.join(REPO_ROOT, "weights")
-REPO_URL    = "github.com/soul-code-tech/quantum-edge-ai-bot.git"
+WEIGHTS_DIR = os.path.join(os.path.dirname(__file__), "weights")
+os.makedirs(WEIGHTS_DIR, exist_ok=True)
+REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+REPO_URL = "github.com/soul-code-tech/quantum-edge-ai-bot.git"
 
 def model_path(symbol: str) -> str:
-    return os.path.join(MODEL_DIR, symbol.replace("-", "") + ".pkl")
+    return os.path.join(WEIGHTS_DIR, symbol.replace("-", "") + ".pkl")
 
 def market_exists(symbol: str) -> bool:
     try:
-        exchange = ccxt.bingx({'options': {'defaultType': 'swap'}})
-        symbol_api = symbol.replace('-', '/')
+        exchange = ccxt.bingx({"options": {"defaultType": "swap"}})
         exchange.load_markets()
-        return symbol_api in exchange.markets
-    except Exception:
+        return symbol.replace("-", "") in exchange.markets
+    except Exception as e:
+        logger.error(f"Проверка рынка {symbol}: {e}")
         return False
 
+def is_model_fresh(symbol: str, max_age_hours: int = 24) -> bool:
+    path = model_path(symbol)
+    if not os.path.exists(path):
+        return False
+    age_hours = (time.time() - os.path.getmtime(path)) / 3600
+    return age_hours < max_age_hours
+
 def train_one(symbol: str, lookback: int = 60, epochs: int = 5) -> bool:
+    if is_model_fresh(symbol):
+        logger.info(f"⏩ {symbol} свежая – пропуск.")
+        return True
     try:
         if not market_exists(symbol):
-            print(f"\n❌ {symbol}: рынок не существует на BingX – пропускаем.")
+            logger.warning(f"{symbol} нет на BingX – пропуск.")
             return False
 
-        print(f"\n🧠 Обучаем {symbol} (epochs={epochs})...")
+        logger.info(f"🧠 Обучаем {symbol} ({epochs} эпох)")
         df = get_bars(symbol, "1h", 300)
         if df is None or len(df) < 200:
-            print(f"\n⚠️ Недостаточно данных для {symbol}")
+            logger.warning(f"{symbol}: мало данных – пропуск.")
             return False
-        df = calculate_strategy_signals(df, 60)
 
+        df = calculate_strategy_signals(df, 60)
         model = LSTMPredictor(lookback=lookback)
         model.train(df, epochs=epochs)
 
-        # Сохраняем только scaler + веса .weights.h5
         weight_file = model_path(symbol).replace(".pkl", ".weights.h5")
         model.model.save_weights(weight_file)
-        with open(model_path(symbol), "wb") as fh:
-            pickle.dump({"scaler": model.scaler}, fh)
-        print(f"\n✅ LSTM обучилась для {symbol}")
+        with open(model_path(symbol), "wb") as f:
+            pickle.dump({"scaler": model.scaler}, f)
+
+        logger.info(f"✅ {symbol} обучён.")
         save_weights_to_github(symbol)
         return True
     except Exception as e:
-        print(f"\n❌ Ошибка обучения {symbol}: {e}")
+        logger.error(f"Ошибка обучения {symbol}: {e}")
         return False
 
 def save_weights_to_github(symbol: str):
     try:
-        os.makedirs(WEIGHTS_DIR, exist_ok=True)
-        src_pkl = model_path(symbol)
-        src_h5  = src_pkl.replace(".pkl", ".weights.h5")
-        dst_pkl = os.path.join(WEIGHTS_DIR, os.path.basename(src_pkl))
-        dst_h5  = os.path.join(WEIGHTS_DIR, os.path.basename(src_h5))
-
-        shutil.copy(src_pkl, dst_pkl)
-        if os.path.exists(src_h5):
-            shutil.copy(src_h5, dst_h5)
-
         os.chdir(REPO_ROOT)
+        token = os.environ.get("GH_TOKEN")
+        if not token:
+            logger.warning("GH_TOKEN нет – пропускаю пуш.")
+            return
 
         subprocess.run(["git", "config", "user.email", "bot@quantum-edge.ai"], check=True)
         subprocess.run(["git", "config", "user.name", "QuantumEdge-Bot"], check=True)
-        subprocess.run(["git", "config", "http.postBuffer", "200M"], check=True)
 
-        token = os.environ.get("GH_TOKEN")
-        if not token:
-            print("❌ GH_TOKEN не установлен – пропускаю пуш.")
-            return
-
-        subprocess.run(["git", "remote", "remove", "origin"], check=False)
-        subprocess.run(
-            ["git", "remote", "add", "origin",
-             f"https://{token}@{REPO_URL}"],
-            check=True
-        )
-
+        subprocess.run(["git", "fetch", "origin", "weights"], check=False)
         subprocess.run(["git", "checkout", "-B", "weights"], check=True)
+        subprocess.run(["git", "reset", "--hard", "origin/weights"], check=False)
+
         subprocess.run(["git", "add", "weights/"], check=True)
         subprocess.run(["git", "commit", "-m", f"update {symbol} weights"], check=True)
 
-        # --- ключевое: fetch + force ---
-        subprocess.run(["git", "fetch", "origin", "weights"], check=False)
         for attempt in range(1, 4):
             try:
-                subprocess.run(["git", "push", "--force", "origin", "weights"], check=True)
-                print(f"✅ Веса {symbol} отправлены в GitHub.")
+                subprocess.run(["git", "push", "origin", "weights"], check=True)
+                logger.info(f"✅ Веса {symbol} отправлены.")
                 return
             except subprocess.CalledProcessError as e:
-                print(f"⚠️  Push {symbol} попытка {attempt} не удалась: {e}")
+                logger.warning(f"Push {symbol} попытка {attempt}: {e}")
                 time.sleep(2 ** attempt)
-        print(f"❌ Не удалось запушить веса {symbol} после 3 попыток.")
+        logger.error(f"❌ Не удалось запушить {symbol}")
+
     except Exception as e:
-        print(f"❌ Ошибка пуша в GitHub для {symbol}: {e}")
+        logger.error(f"Ошибка пуша {symbol}: {e}")
 
 def load_model(symbol: str, lookback: int = 60):
     path = model_path(symbol)
     if not os.path.exists(path):
         return None
     try:
-        with open(path, "rb") as fh:
-            bundle = pickle.load(fh)
+        with open(path, "rb") as f:
+            bundle = pickle.load(f)
         m = LSTMPredictor(lookback=lookback)
         m.build_model((lookback, 5))
         m.model.load_weights(path.replace(".pkl", ".weights.h5"))
+        m.scaler = bundle["scaler"]
         m.is_trained = True
         return m
     except Exception as e:
-        print(f"\n⚠️ Ошибка загрузки модели {symbol}: {e}")
+        logger.error(f"Загрузка модели {symbol}: {e}")
         return None
 
 def initial_train_all(symbols, epochs=5):
-    print("🧠 Первичное обучение всех пар...")
+    logger.info(f"Первичное обучение {len(symbols)} пар...")
     ok = 0
     for s in symbols:
         if train_one(s, epochs=epochs):
             ok += 1
-        print(">", end="", flush=True)
-        for _ in range(4):
-            time.sleep(0.5)
-            print(">", end="", flush=True)
-        print()
-    print(f"\n🧠 Первичное обучение завершено: {ok}/{len(symbols)} пар.")
+        time.sleep(1)
+    logger.info(f"Первичное обучение завершено: {ok}/{len(symbols)}.")
 
-def sequential_trainer(symbols, interval=600, epochs=5):
+def sequential_trainer(symbols, interval=1800, epochs=2):
     idx = 0
     while True:
         sym = symbols[idx % len(symbols)]
-        train_one(sym, epochs=epochs)
+        if not is_model_fresh(sym):
+            train_one(sym, epochs=epochs)
         idx += 1
-        for _ in range(20):
-            time.sleep(30)
-            print(".", end="", flush=True)
-        print()
+        time.sleep(interval)
