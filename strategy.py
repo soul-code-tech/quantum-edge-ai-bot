@@ -1,9 +1,9 @@
 # strategy.py
 import pandas as pd
-from ta.trend import EMAIndicator
+from ta.trend import EMAIndicator, SMAIndicator
 from ta.momentum import RSIIndicator
 from ta.volatility import AverageTrueRange
-from data_fetcher import get_funding_rate   # новое
+from data_fetcher import get_funding_rate
 
 FR_THRESHOLD = 0.05   # 0,05 % / 8ч
 
