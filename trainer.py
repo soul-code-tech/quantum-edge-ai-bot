@@ -12,8 +12,9 @@ import ccxt
 MODEL_DIR = "/tmp/lstm_weights"
 os.makedirs(MODEL_DIR, exist_ok=True)
 
-REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
-WEIGHTS_REPO_DIR = os.path.join(REPO_ROOT, "weights")
+REPO_ROOT   = os.path.dirname(os.path.abspath(__file__))
+WEIGHTS_DIR = os.path.join(REPO_ROOT, "weights")
+REMOTE_URL  = "https://github.com/soul-code-tech/quantum-edge-ai-bot.git"
 
 def model_path(symbol: str) -> str:
     return os.path.join(MODEL_DIR, symbol.replace("-", "") + ".pkl")
@@ -28,6 +29,7 @@ def market_exists(symbol: str) -> bool:
         return False
 
 def train_one(symbol: str, lookback: int = 60, epochs: int = 5) -> bool:
+    """Обучает одну пару и сохраняет веса локально + пушит в GitHub."""
     try:
         if not market_exists(symbol):
             print(f"\n❌ {symbol}: рынок не существует на BingX – пропускаем.")
@@ -47,27 +49,30 @@ def train_one(symbol: str, lookback: int = 60, epochs: int = 5) -> bool:
             pickle.dump({"scaler": model.scaler, "model": model.model}, fh)
         print(f"\n✅ LSTM обучилась для {symbol}")
 
-        # Сохраняем в GitHub
         save_weights_to_github(symbol)
         return True
-
     except Exception as e:
         print(f"\n❌ Ошибка обучения {symbol}: {e}")
         return False
 
 def save_weights_to_github(symbol: str):
+    """Копирует веса в локальную папку weights и пушит ветку weights на GitHub."""
     try:
-        os.makedirs(WEIGHTS_REPO_DIR, exist_ok=True)
+        os.makedirs(WEIGHTS_DIR, exist_ok=True)
         src = model_path(symbol)
-        dst = os.path.join(WEIGHTS_REPO_DIR, symbol.replace("-", "") + ".pkl")
+        dst = os.path.join(WEIGHTS_DIR, symbol.replace("-", "") + ".pkl")
         shutil.copy(src, dst)
 
         os.chdir(REPO_ROOT)
 
-        # ➜➜➜  НАСТРОЙКА Git-автора  ➜➜➜
+        # Настраиваем Git-автора
         subprocess.run(["git", "config", "user.email", "bot@quantum-edge.ai"], check=True)
         subprocess.run(["git", "config", "user.name", "QuantumEdge-Bot"], check=True)
 
+        # Добавляем remote (если ещё не добавлен)
+        subprocess.run(["git", "remote", "add", "origin", REMOTE_URL], check=False)
+
+        # Коммит и пуш
         subprocess.run(["git", "checkout", "-B", "weights"], check=True)
         subprocess.run(["git", "add", "weights/"], check=True)
         subprocess.run(["git", "commit", "-m", f"update {symbol} weights"], check=True)
@@ -77,6 +82,7 @@ def save_weights_to_github(symbol: str):
         print(f"❌ Ошибка пуша в GitHub для {symbol}: {e}")
 
 def load_model(symbol: str, lookback: int = 60):
+    """Загружает модель из локального кэша /tmp/lstm_weights."""
     path = model_path(symbol)
     if not os.path.exists(path):
         return None
@@ -85,7 +91,7 @@ def load_model(symbol: str, lookback: int = 60):
             bundle = pickle.load(fh)
         m = LSTMPredictor(lookback=lookback)
         m.scaler = bundle["scaler"]
-        m.model = bundle["model"]
+        m.model   = bundle["model"]
         m.is_trained = True
         return m
     except Exception as e:
@@ -93,6 +99,7 @@ def load_model(symbol: str, lookback: int = 60):
         return None
 
 def initial_train_all(symbols, epochs=5):
+    """Первичное обучение всех пар."""
     print("🧠 Первичное обучение всех пар...")
     ok = 0
     for s in symbols:
@@ -106,12 +113,13 @@ def initial_train_all(symbols, epochs=5):
     print(f"\n🧠 Первичное обучение завершено: {ok}/{len(symbols)} пар.")
 
 def sequential_trainer(symbols, interval=600, epochs=5):
+    """Бесконечное дообучение по одной паре каждые `interval` секунд."""
     idx = 0
     while True:
         sym = symbols[idx % len(symbols)]
         train_one(sym, epochs=epochs)
         idx += 1
-        for _ in range(20):
+        for _ in range(20):        # 20 × 30 с = 600 с
             time.sleep(30)
             print(".", end="", flush=True)
         print()
