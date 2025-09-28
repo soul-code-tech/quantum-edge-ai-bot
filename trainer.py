@@ -29,7 +29,6 @@ def market_exists(symbol: str) -> bool:
         return False
 
 def train_one(symbol: str, lookback: int = 60, epochs: int = 5) -> bool:
-    """Обучает одну пару и сохраняет веса локально + пушит в GitHub."""
     try:
         if not market_exists(symbol):
             print(f"\n❌ {symbol}: рынок не существует на BingX – пропускаем.")
@@ -45,10 +44,11 @@ def train_one(symbol: str, lookback: int = 60, epochs: int = 5) -> bool:
         model = LSTMPredictor(lookback=lookback)
         model.train(df, epochs=epochs)
 
+        # Сохраняем только scaler + веса .h5
+        model.model.save_weights(model_path(symbol).replace(".pkl", ".h5"))
         with open(model_path(symbol), "wb") as fh:
-            pickle.dump({"scaler": model.scaler, "model": model.model}, fh)
+            pickle.dump({"scaler": model.scaler}, fh)
         print(f"\n✅ LSTM обучилась для {symbol}")
-
         save_weights_to_github(symbol)
         return True
     except Exception as e:
@@ -56,25 +56,28 @@ def train_one(symbol: str, lookback: int = 60, epochs: int = 5) -> bool:
         return False
 
 def save_weights_to_github(symbol: str):
-    """Сохраняет веса в папку weights и пушит ветку weights на GitHub с токеном."""
     try:
         os.makedirs(WEIGHTS_DIR, exist_ok=True)
-        src = model_path(symbol)
-        dst = os.path.join(WEIGHTS_DIR, symbol.replace("-", "") + ".pkl")
-        shutil.copy(src, dst)
+        src_pkl = model_path(symbol)
+        src_h5  = src_pkl.replace(".pkl", ".h5")
+        dst_pkl = os.path.join(WEIGHTS_DIR, os.path.basename(src_pkl))
+        dst_h5  = os.path.join(WEIGHTS_DIR, os.path.basename(src_h5))
+
+        shutil.copy(src_pkl, dst_pkl)
+        if os.path.exists(src_h5):
+            shutil.copy(src_h5, dst_h5)
 
         os.chdir(REPO_ROOT)
 
-        # Git-автор
         subprocess.run(["git", "config", "user.email", "bot@quantum-edge.ai"], check=True)
         subprocess.run(["git", "config", "user.name", "QuantumEdge-Bot"], check=True)
+        subprocess.run(["git", "config", "http.postBuffer", "200M"], check=True)
 
         token = os.environ.get("GH_TOKEN")
         if not token:
             print("❌ GH_TOKEN не установлен – пропускаю пуш.")
             return
 
-        # Удаляем старый origin и добавляем новый с токеном
         subprocess.run(["git", "remote", "remove", "origin"], check=False)
         subprocess.run(
             ["git", "remote", "add", "origin",
@@ -85,13 +88,21 @@ def save_weights_to_github(symbol: str):
         subprocess.run(["git", "checkout", "-B", "weights"], check=True)
         subprocess.run(["git", "add", "weights/"], check=True)
         subprocess.run(["git", "commit", "-m", f"update {symbol} weights"], check=True)
-        subprocess.run(["git", "push", "origin", "weights"], check=True)
-        print(f"✅ Веса {symbol} отправлены в GitHub.")
+
+        # 3 попытки push с форсом
+        for attempt in range(1, 4):
+            try:
+                subprocess.run(["git", "push", "--force-with-lease", "origin", "weights"], check=True)
+                print(f"✅ Веса {symbol} отправлены в GitHub.")
+                return
+            except subprocess.CalledProcessError as e:
+                print(f"⚠️  Push {symbol} попытка {attempt} не удалась: {e}")
+                time.sleep(2 ** attempt)
+        print(f"❌ Не удалось запушить веса {symbol} после 3 попыток.")
     except Exception as e:
         print(f"❌ Ошибка пуша в GitHub для {symbol}: {e}")
 
 def load_model(symbol: str, lookback: int = 60):
-    """Загружает модель из локального кэша /tmp/lstm_weights."""
     path = model_path(symbol)
     if not os.path.exists(path):
         return None
@@ -99,8 +110,9 @@ def load_model(symbol: str, lookback: int = 60):
         with open(path, "rb") as fh:
             bundle = pickle.load(fh)
         m = LSTMPredictor(lookback=lookback)
-        m.scaler = bundle["scaler"]
-        m.model   = bundle["model"]
+        # строим архитектуру и загружаем веса
+        m.build_model((lookback, 5))
+        m.model.load_weights(path.replace(".pkl", ".h5"))
         m.is_trained = True
         return m
     except Exception as e:
@@ -108,7 +120,6 @@ def load_model(symbol: str, lookback: int = 60):
         return None
 
 def initial_train_all(symbols, epochs=5):
-    """Первичное обучение всех пар."""
     print("🧠 Первичное обучение всех пар...")
     ok = 0
     for s in symbols:
@@ -122,7 +133,6 @@ def initial_train_all(symbols, epochs=5):
     print(f"\n🧠 Первичное обучение завершено: {ok}/{len(symbols)} пар.")
 
 def sequential_trainer(symbols, interval=600, epochs=5):
-    """Бесконечное дообучение по одной паре каждые `interval` секунд."""
     idx = 0
     while True:
         sym = symbols[idx % len(symbols)]
