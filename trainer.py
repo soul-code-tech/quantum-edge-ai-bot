@@ -44,8 +44,9 @@ def train_one(symbol: str, lookback: int = 60, epochs: int = 5) -> bool:
         model = LSTMPredictor(lookback=lookback)
         model.train(df, epochs=epochs)
 
-        # сохраняем только scaler + веса .h5
-        model.model.save_weights(model_path(symbol).replace(".pkl", ".h5"))
+        # Сохраняем только scaler + веса .weights.h5
+        weight_file = model_path(symbol).replace(".pkl", ".weights.h5")
+        model.model.save_weights(weight_file)
         with open(model_path(symbol), "wb") as fh:
             pickle.dump({"scaler": model.scaler}, fh)
         print(f"\n✅ LSTM обучилась для {symbol}")
@@ -59,7 +60,7 @@ def save_weights_to_github(symbol: str):
     try:
         os.makedirs(WEIGHTS_DIR, exist_ok=True)
         src_pkl = model_path(symbol)
-        src_h5  = src_pkl.replace(".pkl", ".h5")
+        src_h5  = src_pkl.replace(".pkl", ".weights.h5")
         dst_pkl = os.path.join(WEIGHTS_DIR, os.path.basename(src_pkl))
         dst_h5  = os.path.join(WEIGHTS_DIR, os.path.basename(src_h5))
 
@@ -110,7 +111,7 @@ def load_model(symbol: str, lookback: int = 60):
             bundle = pickle.load(fh)
         m = LSTMPredictor(lookback=lookback)
         m.build_model((lookback, 5))
-        m.model.load_weights(path.replace(".pkl", ".h5"))
+        m.model.load_weights(path.replace(".pkl", ".weights.h5"))
         m.is_trained = True
         return m
     except Exception as e:
