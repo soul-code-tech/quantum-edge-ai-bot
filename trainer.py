@@ -1,16 +1,17 @@
-# trainer.py (фрагменты)
+# trainer.py
 import os
 import time
 import pickle
 import subprocess
 import logging
-from datetime import datetime, timedelta
-from data_fetcher import get_bars
+from datetime import timedelta
+from data_fetcher import get_bars, get_funding_rate
 from strategy import calculate_strategy_signals
-from lstm_model import LSTMPredictor
+from lstm_model import EnsemblePredictor
 import ccxt
 
 logger = logging.getLogger("bot")
+
 WEIGHTS_DIR = os.path.join(os.path.dirname(__file__), "weights")
 os.makedirs(WEIGHTS_DIR, exist_ok=True)
 REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -18,6 +19,15 @@ REPO_URL = "github.com/soul-code-tech/quantum-edge-ai-bot.git"
 
 def model_path(symbol: str) -> str:
     return os.path.join(WEIGHTS_DIR, symbol.replace("-", "") + ".pkl")
+
+def market_exists(symbol: str) -> bool:
+    try:
+        exchange = ccxt.bingx({"options": {"defaultType": "swap"}})
+        exchange.load_markets()
+        return symbol.replace("-", "") in exchange.markets
+    except Exception as e:
+        logger.error(f"Проверка рынка {symbol}: {e}")
+        return False
 
 def is_model_fresh(symbol: str, max_age_hours: int = 24) -> bool:
     path = model_path(symbol)
@@ -31,23 +41,31 @@ def train_one(symbol: str, lookback: int = 60, epochs: int = 5) -> bool:
         logger.info(f"⏩ {symbol} свежая – пропуск.")
         return True
     try:
-        df = get_bars(symbol, "1h", 400)
-        if df is None or len(df) < 300:
+        if not market_exists(symbol):
+            logger.warning(f"{symbol} нет на BingX – пропуск.")
             return False
-        df = calculate_strategy_signals(df, 60)
-        model = LSTMPredictor(lookback=lookback)
-        model.train(df, epochs=epochs)
 
-        weight_file = model_path(symbol).replace(".pkl", ".weights.h5")
-        model.model.save_weights(weight_file)
+        logger.info(f"🧠 Ensemble-обучение {symbol} ({epochs} эпох)")
+        df = get_bars(symbol, "1h", 400)          # последние 400 баров ≈ 16 дней
+        if df is None or len(df) < 300:
+            logger.warning(f"{symbol}: мало данных – пропуск.")
+            return False
+
+        df = calculate_strategy_signals(df, symbol, 60)   # передаём symbol → funding фильтр
+
+        # ========== Ensemble (2 LSTM + logistic) ==========
+        ensemble = EnsemblePredictor(lookbacks=(60, 90))
+        ensemble.train(df, epochs=epochs, bars_back=400)   # walk-forward 7 дней
+
+        # сохраняем объект ensemble
         with open(model_path(symbol), "wb") as f:
-            pickle.dump({"scaler": model.scaler}, f)
+            pickle.dump({"ensemble": ensemble}, f)
 
-        logger.info(f"✅ {symbol} обучён.")
+        logger.info(f"✅ Ensemble {symbol} обучён.")
         save_weights_to_github(symbol)
         return True
     except Exception as e:
-        logger.error(f"Ошибка обучения {symbol}: {e}")
+        logger.error(f"Ошибка ensemble {symbol}: {e}")
         return False
 
 def save_weights_to_github(symbol: str):
@@ -76,12 +94,7 @@ def load_model(symbol: str, lookback: int = 60):
     try:
         with open(path, "rb") as f:
             bundle = pickle.load(f)
-        m = LSTMPredictor(lookback=lookback)
-        m.build_model((lookback, 5))
-        m.model.load_weights(path.replace(".pkl", ".weights.h5"))
-        m.scaler = bundle["scaler"]
-        m.is_trained = True
-        return m
+        return bundle["ensemble"]          # возвращаем объект EnsemblePredictor
     except Exception as e:
         logger.error(f"Загрузка модели {symbol}: {e}")
         return None
@@ -95,8 +108,8 @@ def initial_train_all(symbols, epochs=5):
         time.sleep(1)
     logger.info(f"Первичное обучение завершено: {ok}/{len(symbols)}.")
 
-def sequential_trainer(symbols, interval=1800, epochs=2):
-    """Каждые 30 мин проверяем, кому > 24 ч → переобучаем."""
+def sequential_trainer(symbols, interval=3600 * 24, epochs=2):
+    """Каждые 24 ч проверяем, кому > 24 ч → переобучаем."""
     idx = 0
     while True:
         sym = symbols[idx % len(symbols)]
