@@ -1,47 +1,89 @@
-# main.py
-from flask import Flask
+# main.py  (верхний блок)
 import threading
 import time
 import os
 import requests
 import logging
-from data_fetcher import get_bars
+import traceback                          # для печати стека
+from data_fetcher import get_bars, get_funding_rate
 from strategy import calculate_strategy_signals
 from trader import BingXTrader
-from lstm_model import LSTMPredictor, EnsemblePredictor
+from lstm_model import EnsemblePredictor
 from trainer import initial_train_all, sequential_trainer, load_model
 from download_weights import download_weights
 
+# --------- консольный логгер ---------
 logging.basicConfig(
-    filename="bot.log",
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s"
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[logging.StreamHandler()]   # ← пишем в stdout (Render видит)
 )
+
 logger = logging.getLogger("bot")
 
-app = Flask(__name__)
-
+# --------- остальные настройки без изменений ---------
 SYMBOLS = [
     'BTC-USDT', 'ETH-USDT', 'BNB-USDT', 'SOL-USDT', 'XRP-USDT',
     'ADA-USDT', 'DOGE-USDT', 'DOT-USDT', 'MATIC-USDT', 'LTC-USDT'
 ]
-
-RISK_PERCENT = 1.0          # 1 % от equity
+RISK_PERCENT = 1.0
 STOP_LOSS_PCT = 1.5
 TAKE_PROFIT_PCT = 3.0
 LSTM_CONFIDENCE = 0.75
 TIMEFRAME = '1h'
 LOOKBACK = 200
-SIGNAL_COOLDOWN = 3600
 MAX_POSITIONS = 3
 
 lstm_models = {}
 traders = {}
 last_signal_time = {}
 total_trades = 0
-equity = 100.0              # стартовый капитал (USDT)
+equity = 100.0
+
+app = Flask(__name__)
+
+# ================== отладочный старт ==================
+def start_all():
+    try:
+        logger.info("=== СТАРТ start_all() ===")
+        logger.info("Скачиваем веса...")
+        download_weights()
+
+        logger.info("Загружаем модели...")
+        to_train = []
+        for s in SYMBOLS:
+            logger.debug(f"Загрузка {s}")
+            model = load_model(s)
+            if model:
+                lstm_models[s] = model
+                traders[s] = BingXTrader(symbol=s, use_demo=True, leverage=3)
+            else:
+                lstm_models[s] = EnsemblePredictor()
+                traders[s] = BingXTrader(symbol=s, use_demo=True, leverage=3)
+                to_train.append(s)
+        logger.info(f"К обучению: {len(to_train)} пар")
+
+        if to_train:
+            initial_train_all(to_train, epochs=5)
+            for s in to_train:
+                lstm_models[s] = load_model(s) or EnsemblePredictor()
+
+        logger.info("Запуск фонового переобучения (24 ч)...")
+        threading.Thread(target=sequential_trainer, args=(SYMBOLS, 3600 * 24, 2), daemon=True).start()
+
+        logger.info("Запуск торговой стратегии...")
+        threading.Thread(target=run_strategy, daemon=True).start()
+
+        threading.Thread(target=keep_alive, daemon=True).start()
+        logger.info("=== start_all() завершён ===")
+
+    except Exception as e:
+        logger.error("КРИТИЧЕСКАЯ ОШИБКА в start_all():")
+        logger.error(traceback.format_exc())
+        raise   # чтобы процесс упал и Render перезапустил контейнер
 
 
+# ================== остальное без изменений ==================
 def keep_alive():
     host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
     if not host:
@@ -50,8 +92,8 @@ def keep_alive():
     while True:
         try:
             requests.get(url, timeout=10)
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"keep-alive error: {e}")
         time.sleep(120)
 
 
@@ -61,17 +103,16 @@ def run_strategy():
         try:
             current_time = time.time()
             open_pos = sum(1 for s in SYMBOLS if traders[s].position is not None)
-
             for symbol in SYMBOLS:
-                if not lstm_models[symbol].is_trained:
+                if not getattr(lstm_models[symbol], 'is_trained', False):
                     continue
-                if current_time - last_signal_time.get(symbol, 0) < SIGNAL_COOLDOWN:
+                if current_time - last_signal_time.get(symbol, 0) < 3600:
                     continue
 
                 df = get_bars(symbol, TIMEFRAME, LOOKBACK)
                 if df is None or len(df) < 100:
                     continue
-                df = calculate_strategy_signals(df, symbol, 60)   # ← funding фильтр внутри
+                df = calculate_strategy_signals(df, symbol, 60)
 
                 prob = lstm_models[symbol].predict_next(df)
                 if prob < LSTM_CONFIDENCE:
@@ -83,7 +124,6 @@ def run_strategy():
                 if not strong:
                     continue
 
-                # не превышаем лимит позиций
                 if open_pos >= MAX_POSITIONS:
                     continue
 
@@ -103,40 +143,9 @@ def run_strategy():
 
             time.sleep(60)
         except Exception as e:
-            logger.error(f"Критическая ошибка: {e}")
+            logger.error(f"Ошибка в run_strategy: {e}")
+            logger.error(traceback.format_exc())
             time.sleep(60)
-
-
-def start_all():
-    logger.info("Скачиваем веса...")
-    download_weights()
-
-    logger.info("Загружаем модели...")
-    to_train = []
-    for s in SYMBOLS:
-        model = load_model(s)
-        if model:
-            lstm_models[s] = model
-            traders[s] = BingXTrader(symbol=s, use_demo=True, leverage=3)
-        else:
-            lstm_models[s] = EnsemblePredictor()   # пустой, будет обучен
-            traders[s] = BingXTrader(symbol=s, use_demo=True, leverage=3)
-            to_train.append(s)
-
-    if to_train:
-        logger.info(f"К обучению: {len(to_train)} пар")
-        initial_train_all(to_train, epochs=5)
-        for s in to_train:
-            lstm_models[s] = load_model(s) or EnsemblePredictor()
-
-    logger.info("Запуск фонового переобучения (24 ч)...")
-    threading.Thread(target=sequential_trainer, args=(SYMBOLS, 3600 * 24, 2), daemon=True).start()
-
-    logger.info("Запуск торговой стратегии...")
-    threading.Thread(target=run_strategy, daemon=True).start()
-
-    threading.Thread(target=keep_alive, daemon=True).start()
-    logger.info("Бот запущен: тренд + funding + ensemble + ≤3 поз.")
 
 
 @app.route('/')
@@ -151,6 +160,8 @@ def health_check():
 
 
 if __name__ == "__main__":
+    # запускаем start_all в отдельном потоке, чтобы Flask не блокировался
     threading.Thread(target=start_all, daemon=True).start()
     port = int(os.environ.get("PORT", 10000))
+    logger.info(f"🌐 Flask server starting on port {port}")
     app.run(host='0.0.0.0', port=port)
