@@ -1,37 +1,40 @@
-# main.py  (верхний блок)
+# main.py
+from flask import Flask, Blueprint, jsonify, render_template_string   # ← новое
 import threading
 import time
 import os
 import requests
 import logging
-import traceback                          # для печати стека
-from data_fetcher import get_bars, get_funding_rate
+import traceback
+from data_fetcher import get_bars
 from strategy import calculate_strategy_signals
 from trader import BingXTrader
 from lstm_model import EnsemblePredictor
 from trainer import initial_train_all, sequential_trainer, load_model
 from download_weights import download_weights
+from pnl_monitor import pnl_bp, start_pnl_monitor   # ← PnL-график
 
-# --------- консольный логгер ---------
+# ----------- логгер в stdout (Render видит) -----------
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[logging.StreamHandler()]   # ← пишем в stdout (Render видит)
+    handlers=[logging.StreamHandler()]
 )
-
 logger = logging.getLogger("bot")
 
-# --------- остальные настройки без изменений ---------
+# ----------- настройки без изменений -----------
 SYMBOLS = [
     'BTC-USDT', 'ETH-USDT', 'BNB-USDT', 'SOL-USDT', 'XRP-USDT',
     'ADA-USDT', 'DOGE-USDT', 'DOT-USDT', 'MATIC-USDT', 'LTC-USDT'
 ]
+
 RISK_PERCENT = 1.0
 STOP_LOSS_PCT = 1.5
 TAKE_PROFIT_PCT = 3.0
 LSTM_CONFIDENCE = 0.75
 TIMEFRAME = '1h'
 LOOKBACK = 200
+SIGNAL_COOLDOWN = 3600
 MAX_POSITIONS = 3
 
 lstm_models = {}
@@ -40,7 +43,8 @@ last_signal_time = {}
 total_trades = 0
 equity = 100.0
 
-app = Flask(__name__)
+app = Flask(__name__)   # ← теперь Flask определён
+app.register_blueprint(pnl_bp, url_prefix='/pnl')   # ← PnL-график
 
 # ================== отладочный старт ==================
 def start_all():
