@@ -44,7 +44,7 @@ def train_one(symbol: str, lookback: int = 60, epochs: int = 5) -> bool:
         model = LSTMPredictor(lookback=lookback)
         model.train(df, epochs=epochs)
 
-        # Сохраняем только scaler + веса .h5
+        # сохраняем только scaler + веса .h5
         model.model.save_weights(model_path(symbol).replace(".pkl", ".h5"))
         with open(model_path(symbol), "wb") as fh:
             pickle.dump({"scaler": model.scaler}, fh)
@@ -89,7 +89,6 @@ def save_weights_to_github(symbol: str):
         subprocess.run(["git", "add", "weights/"], check=True)
         subprocess.run(["git", "commit", "-m", f"update {symbol} weights"], check=True)
 
-        # 3 попытки push с форсом
         for attempt in range(1, 4):
             try:
                 subprocess.run(["git", "push", "--force-with-lease", "origin", "weights"], check=True)
@@ -110,7 +109,6 @@ def load_model(symbol: str, lookback: int = 60):
         with open(path, "rb") as fh:
             bundle = pickle.load(fh)
         m = LSTMPredictor(lookback=lookback)
-        # строим архитектуру и загружаем веса
         m.build_model((lookback, 5))
         m.model.load_weights(path.replace(".pkl", ".h5"))
         m.is_trained = True
@@ -138,7 +136,7 @@ def sequential_trainer(symbols, interval=600, epochs=5):
         sym = symbols[idx % len(symbols)]
         train_one(sym, epochs=epochs)
         idx += 1
-        for _ in range(20):        # 20 × 30 с = 600 с
+        for _ in range(20):
             time.sleep(30)
             print(".", end="", flush=True)
         print()
