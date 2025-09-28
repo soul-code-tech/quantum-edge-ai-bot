@@ -1,13 +1,35 @@
 # trader.py
 import ccxt
 import os
+import logging
 from dotenv import load_dotenv
 
 load_dotenv()
+logger = logging.getLogger("bot")
+
+# ----------- Kelly и риск -----------
+KELLY_FRACTION = 0.25            # начнём с консервативной доли Kelly
+MAX_POSITIONS = 3                # не держим > 3 монет одновременно
+MAKER_FEE = 0.0002               # BingX maker rebate ≈ 0,02 %
+SLIP_BUFFER = 0.0005             # 0,05 % «подтираем» цену, чтобы 100 % попасть в мейкер
+
+# ----------- минимальные лоты -----------
+MIN_LOTS = {
+    'BTC-USDT': 0.001,
+    'ETH-USDT': 0.001,
+    'BNB-USDT': 0.01,
+    'SOL-USDT': 0.01,
+    'XRP-USDT': 1,
+    'ADA-USDT': 1,
+    'DOGE-USDT': 1,
+    'DOT-USDT': 0.1,
+    'MATIC-USDT': 1,
+    'LTC-USDT': 0.01
+}
 
 
 class BingXTrader:
-    def __init__(self, symbol='BTC-USDT', use_demo=False, leverage=10):
+    def __init__(self, symbol='BTC-USDT', use_demo=False, leverage=3):
         self.symbol = symbol
         self.use_demo = use_demo
         self.leverage = leverage
@@ -19,150 +41,56 @@ class BingXTrader:
         })
         if use_demo:
             self.exchange.set_sandbox_mode(True)
-        # self._set_leverage(leverage)   # вызываем после первого ордера
         self.position = None
-        self.trailing_stop_price = None
-        self.trailing_distance_percent = 1.0
 
-    # ----------  leverage (ccxt 4.x unified)  ----------
-    def _set_leverage(self, leverage: int, side: str = "LONG"):
+    # ---------- универсальный размер позиции ----------
+    def calc_position_size(self, equity: float, entry: float, atr: float, kelly: float = KELLY_FRACTION) -> float:
+        """
+        Kelly-fractional size по ATR-стопу.
+        risk = KellyFraction * equity
+        size = risk / (ATR * 1.5)
+        """
+        risk_usd = kelly * equity
+        stop_usd = atr * 1.5
+        contracts = risk_usd / stop_usd
+        min_contracts = MIN_LOTS.get(self.symbol, 0.001)
+        return max(contracts, min_contracts)
+
+    # ---------- post-only лимитный вход ----------
+    def place_limit_order(self, side: str, amount: float, entry: float, sl_pct: float, tp_pct: float):
+        """
+        1. Ставим limit-ордер чуть выше/ниже рынка (post-only).
+        2. После исполнения — ставим стоп-лимит и тейк-лимит.
+        3. Возвращаем dict с информацией о позиции.
+        """
         try:
-            sym = self.symbol.replace("-", "")
-            self.exchange.set_leverage(leverage, symbol=sym, params={'side': side})
-            print(f"✅ {self.symbol}: leverage set to {leverage}x {side}")
-        except Exception as e:
-            print(f"⚠️ could not set leverage for {self.symbol}: {e}")
+            # цена чуть «лучше» рынка, чтобы 100 % попасть в мейкер
+            ticker = self.exchange.fetch_ticker(self.symbol)
+            last = float(ticker['last'])
+            limit_price = last * (1 - SLIP_BUFFER) if side == 'buy' else last * (1 + SLIP_BUFFER)
 
-    # ----------  place order  ----------
-    def place_order(self, side, amount, stop_loss_percent=1.5, take_profit_percent=3.0):
-        try:
-            print(f"📤 sending market order: {side} {amount} {self.symbol}")
-            market_order = self.exchange.create_order(
-                symbol=self.symbol,
-                type='market',
-                side=side,
-                amount=amount
-            )
-            order_id = market_order.get('id', 'N/A')
-            print(f"✅ market order filled: {order_id}")
-
-            # ставим плечо ТОЛЬКО после успешного маркет-ордера
-            self._set_leverage(self.leverage, side.upper())
-
-            entry_price = market_order.get('price')
-            if not entry_price:
-                ticker = self.exchange.fetch_ticker(self.symbol)
-                entry_price = ticker['last']
-
-            if side == 'buy':
-                stop_loss_price = entry_price * (1 - stop_loss_percent / 100)
-                take_profit_price = entry_price * (1 + take_profit_percent / 100)
-                self.trailing_stop_price = entry_price * (1 - self.trailing_distance_percent / 100)
-            else:
-                stop_loss_price = entry_price * (1 + stop_loss_percent / 100)
-                take_profit_price = entry_price * (1 - take_profit_percent / 100)
-                self.trailing_stop_price = entry_price * (1 + self.trailing_distance_percent / 100)
-
-            print(f"📊 entry price: {entry_price:.2f}")
-            print(f"⛔ placing stop-market: {stop_loss_price:.2f} ({stop_loss_percent}%)")
-            print(f"🎯 placing take-profit limit: {take_profit_price:.2f} ({take_profit_percent}%)")
-
-            self.exchange.create_order(
-                symbol=self.symbol,
-                type='stop_market',
-                side='sell' if side == 'buy' else 'buy',
-                amount=amount,
-                params={'stopPrice': stop_loss_price, 'reduceOnly': True}
-            )
-
-            self.exchange.create_order(
+            order = self.exchange.create_order(
                 symbol=self.symbol,
                 type='limit',
-                side='sell' if side == 'buy' else 'buy',
+                side=side,
                 amount=amount,
-                price=take_profit_price,
-                params={'reduceOnly': True}
+                price=limit_price,
+                params={'postOnly': True}
             )
+            logger.info(f"POST-ONLY {side} {amount} {self.symbol} @ {limit_price:.4f}")
 
-            self.position = {
-                'side': side,
-                'entry_price': entry_price,
-                'amount': amount,
-                'last_trailing_price': entry_price
-            }
+            # ждём исполнения (или сразу проверяем статус)
+            order = self.exchange.fetch_order(order['id'], self.symbol)
+            if order['status'] != 'closed':
+                # не исполнился за 5 сек — отменяем, выходим
+                self.exchange.cancel_order(order['id'], self.symbol)
+                logger.info(f"Лимит не исполнен, отмена {self.symbol}")
+                return None
 
-            print(f"✅ order {side} on {self.symbol} sent successfully.")
-            return market_order
+            # ставим плечо
+            self.exchange.set_leverage(self.leverage, symbol=self.symbol.replace('-', ''))
 
-        except Exception as e:
-            error_str = str(e)
-            if "position not exist" in error_str:
-                print(f"❌ {self.symbol}: position not found – order may not have filled.")
-            elif "Invalid order quantity" in error_str:
-                print(f"❌ {self.symbol}: invalid order size – check limits.")
-            elif "101415" in error_str:
-                print(f"🚫 {self.symbol}: trading temporarily blocked – waiting...")
-            elif "101212" in error_str:
-                print(f"⚠️ {self.symbol}: pending orders exist – cancel them manually.")
-            elif "Invalid order type" in error_str:
-                print(f"❌ {self.symbol}: invalid order type – use 'stop_market' & 'limit'.")
-            elif "reduceOnly" in error_str:
-                print(f"⚠️ {self.symbol}: reduceOnly requires open position – check fill.")
-            else:
-                print(f"❌ API error {self.symbol}: {type(e).__name__}: {error_str}")
-            return None
-
-    # ----------  trailing stop  ----------
-    def update_trailing_stop(self):
-        if not self.position:
-            return
-        try:
-            ticker = self.exchange.fetch_ticker(self.symbol)
-            current_price = ticker['last']
-            side = self.position['side']
-            new_trailing_price = self.trailing_stop_price
-
+            # стоп и тейк
             if side == 'buy':
-                if current_price > self.position['last_trailing_price']:
-                    new_trailing_price = current_price * (1 - self.trailing_distance_percent / 100)
-                    if new_trailing_price > self.trailing_stop_price:
-                        self.trailing_stop_price = new_trailing_price
-                        print(f"📈 {self.symbol}: trailing raised to {self.trailing_stop_price:.2f}")
-                        self._cancel_all_stops()
-                        self.exchange.create_order(
-                            symbol=self.symbol,
-                            type='stop_market',
-                            side='sell',
-                            amount=self.position['amount'],
-                            params={'stopPrice': self.trailing_stop_price, 'reduceOnly': True}
-                        )
-                        self.position['last_trailing_price'] = current_price
-
-            elif side == 'sell':
-                if current_price < self.position['last_trailing_price']:
-                    new_trailing_price = current_price * (1 + self.trailing_distance_percent / 100)
-                    if new_trailing_price < self.trailing_stop_price:
-                        self.trailing_stop_price = new_trailing_price
-                        print(f"📉 {self.symbol}: trailing lowered to {self.trailing_stop_price:.2f}")
-                        self._cancel_all_stops()
-                        self.exchange.create_order(
-                            symbol=self.symbol,
-                            type='stop_market',
-                            side='buy',
-                            amount=self.position['amount'],
-                            params={'stopPrice': self.trailing_stop_price, 'reduceOnly': True}
-                        )
-                        self.position['last_trailing_price'] = current_price
-        except Exception as e:
-            print(f"⚠️ {self.symbol}: trailing update error: {e}")
-
-    # ----------  helpers  ----------
-    def _cancel_all_stops(self):
-        try:
-            orders = self.exchange.fetch_open_orders(self.symbol)
-            for order in orders:
-                if order['type'] == 'stop_market' and order.get('reduceOnly'):
-                    self.exchange.cancel_order(order['id'], self.symbol)
-                    print(f"🗑️ {self.symbol}: cancelled stop-order {order['id']}")
-        except Exception as e:
-            print(f"⚠️ {self.symbol}: failed to cancel stops: {e}")
+                stop_price = limit_price * (1 - sl_pct / 100)
+                tp_price = limit_price * (1 + tp_pct /
