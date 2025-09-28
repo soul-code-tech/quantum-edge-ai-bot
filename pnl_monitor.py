@@ -14,7 +14,14 @@ logger = logging.getLogger("bot")
 PNL_BP = Blueprint('pnl', __name__)
 JSON_FILE = "pnl_history.json"
 
+# ------------------------------------------------------------------
+# 1. Загружаем realized PnL за последние 7 дней
+# ------------------------------------------------------------------
 def fetch_closed_pnl(api_key, secret, use_demo=False):
+    """
+    BingX: /openApi/swap/v2/user/income
+    incomeType = 'REALIZED_PNL'
+    """
     try:
         exchange = ccxt.bingx({
             'apiKey': api_key,
@@ -24,11 +31,14 @@ def fetch_closed_pnl(api_key, secret, use_demo=False):
         })
         if use_demo:
             exchange.set_sandbox_mode(True)
+
         since = exchange.parse8601((datetime.utcnow() - timedelta(days=7)).isoformat())
         income = exchange.fetch_income(since=since, params={'incomeType': 'REALIZED_PNL'})
+
         df = pd.DataFrame(income)
         if df.empty:
             return pd.DataFrame(columns=['timestamp', 'symbol', 'income', 'balance'])
+
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         df['income'] = pd.to_numeric(df['income'])
         df = df[['timestamp', 'symbol', 'income']].sort_values('timestamp')
@@ -38,15 +48,28 @@ def fetch_closed_pnl(api_key, secret, use_demo=False):
         logger.error(f"fetch_closed_pnl: {e}")
         return pd.DataFrame()
 
+
+# ------------------------------------------------------------------
+# 2. Считаем equity & drawdown
+# ------------------------------------------------------------------
 def calc_stats(df: pd.DataFrame) -> dict:
     if df.empty:
-        return {'equity': [100.0], 'drawdown': [0.0], 'max_dd': 0.0, 'sharpe': 0.0, 'total_pnl': 0.0, 'updated': datetime.utcnow().isoformat()}
+        return {
+            'equity': [100.0],
+            'drawdown': [0.0],
+            'max_dd': 0.0,
+            'sharpe': 0.0,
+            'total_pnl': 0.0,
+            'updated': datetime.utcnow().isoformat()
+        }
+
     equity = df['balance'].tolist()
     peak = pd.Series(equity).cummax()
     drawdown = ((pd.Series(equity) - peak) / peak * 100).tolist()
     max_dd = max(drawdown) if drawdown else 0.0
     returns = pd.Series(equity).pct_change().dropna()
     sharpe = returns.mean() / returns.std() * (365**0.5) if returns.std() else 0.0
+
     return {
         'equity': equity,
         'drawdown': drawdown,
@@ -55,6 +78,19 @@ def calc_stats(df: pd.DataFrame) -> dict:
         'total_pnl': round(equity[-1] - 100.0, 4),
         'updated': datetime.utcnow().isoformat()
     }
+
+
+# ------------------------------------------------------------------
+# 3. Flask-эндпоинты
+# ------------------------------------------------------------------
+@PNL_BP.route("/pnl")
+def pnl_json():
+    df = fetch_closed_pnl(os.getenv('BINGX_API_KEY'), os.getenv('BINGX_SECRET_KEY'), use_demo=False)
+    stats = calc_stats(df)
+    with open(JSON_FILE, 'w') as f:
+        json.dump(stats, f)
+    return jsonify(stats)
+
 
 HTML_PAGE = """
 <!DOCTYPE html>
@@ -97,3 +133,34 @@ HTML_PAGE = """
     </script>
 </body>
 </html>
+"""
+
+@PNL_BP.route("/chart")
+def chart_html():
+    return render_template_string(HTML_PAGE)
+
+
+# ------------------------------------------------------------------
+# 4. Фоновый поток: обновляем каждые 30 мин и пишем итог в 00:05 UTC
+# ------------------------------------------------------------------
+def start_pnl_monitor():
+    def monitor():
+        while True:
+            try:
+                df = fetch_closed_pnl(os.getenv('BINGX_API_KEY'), os.getenv('BINGX_SECRET_KEY'), use_demo=False)
+                stats = calc_stats(df)
+                with open(JSON_FILE, 'w') as f:
+                    json.dump(stats, f)
+
+                # пишем итог каждый день в 00:05 UTC
+                now = datetime.utcnow()
+                if now.hour == 0 and now.minute <= 5:
+                    logger.info(f"DAILY-PnL: total={stats['total_pnl']} max_dd={stats['max_dd']}% sharpe={stats['sharpe']}")
+
+                time.sleep(30 * 60)   # 30 минут
+            except Exception as e:
+                logger.error(f"pnl_monitor: {e}")
+                time.sleep(300)
+
+    threading.Thread(target=monitor, daemon=True).start()
+    logger.info("PnL-мониторинг запущен (обновление каждые 30 мин)")
