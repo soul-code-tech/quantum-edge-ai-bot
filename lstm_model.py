@@ -25,6 +25,9 @@ class LSTMPredictor:
         return np.array(X), np.array(y)
 
     def build_model(self, input_shape):
+        """Построить архитектуру, если ещё не построена."""
+        if self.model is not None:
+            return
         model = Sequential()
         model.add(LSTM(64, return_sequences=True, input_shape=input_shape))
         model.add(Dropout(0.3))
@@ -35,17 +38,12 @@ class LSTMPredictor:
         model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
         self.model = model
 
-    def train(self, df, epochs=5):          # <-- добавлен параметр
-        if self.model is None:
-            data = self.prepare_features(df)
-            X, y = self.create_sequences(data)
-            X = X.reshape((X.shape[0], X.shape[1], 5))
-            self.build_model(input_shape=(X.shape[1], X.shape[2]))
-        else:
-            data = self.prepare_features(df)
-            X, y = self.create_sequences(data)
-            X = X.reshape((X.shape[0], X.shape[1], 5))
+    def train(self, df, epochs=5):
+        data = self.prepare_features(df)
+        X, y = self.create_sequences(data)
+        X = X.reshape((X.shape[0], X.shape[1], 5))
 
+        self.build_model((X.shape[1], X.shape[2]))
         print(f"🧠 Обучаем LSTM-модель на {epochs} эпохах...")
         self.model.fit(X, y, epochs=epochs, batch_size=32, verbose=0)
         self.is_trained = True
@@ -53,7 +51,7 @@ class LSTMPredictor:
 
     def predict_next(self, df):
         if not self.is_trained:
-            self.train(df, epochs=5)        # fallback, если вдруг не обучена
+            self.train(df, epochs=5)
         data = self.prepare_features(df)
         last_sequence = data[-self.lookback:].reshape(1, self.lookback, -1)
         prob = float(self.model.predict(last_sequence, verbose=0)[0][0])
