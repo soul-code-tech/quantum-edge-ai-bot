@@ -17,11 +17,20 @@ WEIGHTS_DIR = os.path.join(REPO_ROOT, "weights")
 def model_path(symbol: str) -> str:
     return os.path.join(MODEL_DIR, symbol.replace("-", "") + ".pkl")
 
+# trainer.py  (вставь вместо старого market_exists)
 def market_exists(symbol: str) -> bool:
     try:
-        exchange = ccxt.bingx({'options': {'defaultType': 'swap'}, 'enableRateLimit': True})
+        exchange = ccxt.bingx({"options": {"defaultType": "swap"}, 'enableRateLimit': True})
         exchange.load_markets()
-        return symbol in exchange.markets
+
+        # ← отладка: покажем, что вернул BingX
+        if symbol in exchange.markets:
+            return True
+        else:
+            # выводим **все** swap-тикеры, чтобы выбрать правильные
+            swap_tickers = [t for t in exchange.markets if t.endswith('-USDT')]
+            print(f"⚠️ {symbol} НЕ в swap-списке BingX. Пример тикеров: {swap_tickers[:10]}")
+            return False
     except Exception as e:
         print(f"⚠️ Ошибка проверки рынка {symbol}: {e}")
         return False
