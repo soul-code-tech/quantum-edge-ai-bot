@@ -14,13 +14,16 @@ logger = logging.getLogger("bot")
 PNL_BP = Blueprint('pnl', __name__)
 JSON_FILE = "pnl_history.json"
 
+
 # ------------------------------------------------------------------
-# 1. Загружаем realized PnL за последние 7 дней
+# 1. Загружаем закрытые сделки (reduceOnly = наши TP/SL)
 # ------------------------------------------------------------------
 def fetch_closed_pnl(api_key, secret, use_demo=False):
     """
-    BingX: /openApi/swap/v2/user/income
-    incomeType = 'REALIZED_PNL'
+    BingX НЕ имеет fetch_income(), поэтому:
+    1. берём fetch_my_trades() за последние 7 дней
+    2. фильтруем reduceOnly = True (наши выходы)
+    3. считаем PnL как (sell_price - buy_price) * amount
     """
     try:
         exchange = ccxt.bingx({
@@ -33,14 +36,19 @@ def fetch_closed_pnl(api_key, secret, use_demo=False):
             exchange.set_sandbox_mode(True)
 
         since = exchange.parse8601((datetime.utcnow() - timedelta(days=7)).isoformat())
-        income = exchange.fetch_income(since=since, params={'incomeType': 'REALIZED_PNL'})
+        trades = exchange.fetch_my_trades(since=since)
 
-        df = pd.DataFrame(income)
+        # оставляем только reduceOnly = наши выходы
+        df = pd.DataFrame([t for t in trades if t.get('info', {}).get('reduceOnly') is True])
         if df.empty:
             return pd.DataFrame(columns=['timestamp', 'symbol', 'income', 'balance'])
 
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-        df['income'] = pd.to_numeric(df['income'])
+        df['price'] = pd.to_numeric(df['price'])
+        df['amount'] = pd.to_numeric(df['amount'])
+        # доход = (sell - buy) * amount
+        df['income'] = (df['side'] == 'sell').astype(int) * df['price'] * df['amount'] - \
+                       (df['side'] == 'buy').astype(int) * df['price'] * df['amount']
         df = df[['timestamp', 'symbol', 'income']].sort_values('timestamp')
         df['balance'] = df['income'].cumsum()
         return df
