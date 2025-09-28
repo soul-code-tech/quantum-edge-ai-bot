@@ -9,7 +9,7 @@ from strategy import calculate_strategy_signals
 from trader import BingXTrader
 from lstm_model import LSTMPredictor
 from trainer import initial_train_all, sequential_trainer, load_model
-from download_weights import download_weights   # ← новый импорт
+from download_weights import download_weights
 
 app = Flask(__name__)
 
@@ -120,15 +120,22 @@ def run_strategy():
             time.sleep(60)
 
 def start_all():
-    # 1. скачиваем веса из GitHub
+    # 1. Скачиваем веса из GitHub (если есть)
     download_weights()
-    # 2. запускаем фоновое дообучение
-    threading.Thread(target=background_trainer, daemon=True).start()
-    # 3. торговля
+
+    # 2. Первичное обучение всех пар + пуш в GitHub
+    initial_train_all(SYMBOLS, epochs=5)
+
+    # 3. Фоновое дообучение каждые 10 минут + пуш в GitHub
+    threading.Thread(target=sequential_trainer, args=(SYMBOLS, 600, 3), daemon=True).start()
+
+    # 4. Запуск торговой стратегии
     threading.Thread(target=run_strategy, daemon=True).start()
-    # 4. keep-alive
+
+    # 5. Keep-alive пинг
     threading.Thread(target=keep_alive, daemon=True).start()
-    print("🚀 trading + background training + keep-alive loops started")
+
+    print("🚀 Bot запущен: обучение + дообучение + торговля + keep-alive")
 
 @app.route('/')
 def wake_up():
