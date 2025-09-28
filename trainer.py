@@ -1,4 +1,4 @@
-# trainer.py
+# trainer.py (фрагменты)
 import os
 import time
 import pickle
@@ -11,7 +11,6 @@ from lstm_model import LSTMPredictor
 import ccxt
 
 logger = logging.getLogger("bot")
-
 WEIGHTS_DIR = os.path.join(os.path.dirname(__file__), "weights")
 os.makedirs(WEIGHTS_DIR, exist_ok=True)
 REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -19,15 +18,6 @@ REPO_URL = "github.com/soul-code-tech/quantum-edge-ai-bot.git"
 
 def model_path(symbol: str) -> str:
     return os.path.join(WEIGHTS_DIR, symbol.replace("-", "") + ".pkl")
-
-def market_exists(symbol: str) -> bool:
-    try:
-        exchange = ccxt.bingx({"options": {"defaultType": "swap"}})
-        exchange.load_markets()
-        return symbol.replace("-", "") in exchange.markets
-    except Exception as e:
-        logger.error(f"Проверка рынка {symbol}: {e}")
-        return False
 
 def is_model_fresh(symbol: str, max_age_hours: int = 24) -> bool:
     path = model_path(symbol)
@@ -41,16 +31,9 @@ def train_one(symbol: str, lookback: int = 60, epochs: int = 5) -> bool:
         logger.info(f"⏩ {symbol} свежая – пропуск.")
         return True
     try:
-        if not market_exists(symbol):
-            logger.warning(f"{symbol} нет на BingX – пропуск.")
+        df = get_bars(symbol, "1h", 400)
+        if df is None or len(df) < 300:
             return False
-
-        logger.info(f"🧠 Обучаем {symbol} ({epochs} эпох)")
-        df = get_bars(symbol, "1h", 300)
-        if df is None or len(df) < 200:
-            logger.warning(f"{symbol}: мало данных – пропуск.")
-            return False
-
         df = calculate_strategy_signals(df, 60)
         model = LSTMPredictor(lookback=lookback)
         model.train(df, epochs=epochs)
@@ -74,27 +57,15 @@ def save_weights_to_github(symbol: str):
         if not token:
             logger.warning("GH_TOKEN нет – пропускаю пуш.")
             return
-
         subprocess.run(["git", "config", "user.email", "bot@quantum-edge.ai"], check=True)
         subprocess.run(["git", "config", "user.name", "QuantumEdge-Bot"], check=True)
-
         subprocess.run(["git", "fetch", "origin", "weights"], check=False)
         subprocess.run(["git", "checkout", "-B", "weights"], check=True)
         subprocess.run(["git", "reset", "--hard", "origin/weights"], check=False)
-
         subprocess.run(["git", "add", "weights/"], check=True)
         subprocess.run(["git", "commit", "-m", f"update {symbol} weights"], check=True)
-
-        for attempt in range(1, 4):
-            try:
-                subprocess.run(["git", "push", "origin", "weights"], check=True)
-                logger.info(f"✅ Веса {symbol} отправлены.")
-                return
-            except subprocess.CalledProcessError as e:
-                logger.warning(f"Push {symbol} попытка {attempt}: {e}")
-                time.sleep(2 ** attempt)
-        logger.error(f"❌ Не удалось запушить {symbol}")
-
+        subprocess.run(["git", "push", "origin", "weights"], check=True)   # ← без --force
+        logger.info(f"✅ Веса {symbol} отправлены.")
     except Exception as e:
         logger.error(f"Ошибка пуша {symbol}: {e}")
 
@@ -125,6 +96,7 @@ def initial_train_all(symbols, epochs=5):
     logger.info(f"Первичное обучение завершено: {ok}/{len(symbols)}.")
 
 def sequential_trainer(symbols, interval=1800, epochs=2):
+    """Каждые 30 мин проверяем, кому > 24 ч → переобучаем."""
     idx = 0
     while True:
         sym = symbols[idx % len(symbols)]
