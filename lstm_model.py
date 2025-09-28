@@ -14,7 +14,6 @@ class LSTMPredictor:
         self.model = None
         self.is_trained = False
 
-    # --------- те же методы, что и раньше ----------
     def prepare_features(self, df):
         df_features = df[['close', 'volume', 'rsi', 'sma20', 'atr']].copy().dropna()
         return self.scaler.fit_transform(df_features)
@@ -40,7 +39,6 @@ class LSTMPredictor:
         model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
         self.model = model
 
-    # --------- обучение на последних N баров (walk-forward) ----------
     def train(self, df, epochs=5, bars_back=400):
         data = self.prepare_features(df.tail(bars_back))
         X, y = self.create_sequences(data)
@@ -64,7 +62,7 @@ class EnsemblePredictor:
         self.log_reg = LogisticRegression()
 
     def train(self, df, epochs=5, bars_back=400):
-        # 1. обучаем каждую LSTM
+        # обучаем каждую LSTM
         X_stack = None
         for m in self.models:
             m.train(df, epochs=epochs, bars_back=bars_back)
@@ -72,7 +70,7 @@ class EnsemblePredictor:
             col = np.full((len(df.tail(bars_back)), 1), prob)
             X_stack = col if X_stack is None else np.hstack([X_stack, col])
 
-        # 2. логистическая регрессия на вероятностях моделей
+        # логистическая регрессия на вероятностях моделей
         y = (df['close'].shift(-1) > df['close']).tail(bars_back).astype(int).values
         self.log_reg.fit(X_stack, y)
         self.is_trained = True
