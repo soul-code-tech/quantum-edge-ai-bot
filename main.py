@@ -8,20 +8,25 @@ import logging
 from data_fetcher import get_bars
 from strategy import calculate_strategy_signals
 from trader import BingXTrader
-from lstm_model import LSTMPredictor
-from trainer import initial_train_all, sequential_trainer, load_model, train_one
+from lstm_model import LSTMPredictor, EnsemblePredictor
+from trainer import initial_train_all, sequential_trainer, load_model
 from download_weights import download_weights
 
-logging.basicConfig(filename="bot.log", level=logging.INFO,
-                    format="%(asctime)s [%(levelname)s] %(message)s")
+logging.basicConfig(
+    filename="bot.log",
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
 logger = logging.getLogger("bot")
 
 app = Flask(__name__)
 
-SYMBOLS = ['BTC-USDT', 'ETH-USDT', 'BNB-USDT', 'SOL-USDT', 'XRP-USDT',
-           'ADA-USDT', 'DOGE-USDT', 'DOT-USDT', 'MATIC-USDT', 'LTC-USDT']
+SYMBOLS = [
+    'BTC-USDT', 'ETH-USDT', 'BNB-USDT', 'SOL-USDT', 'XRP-USDT',
+    'ADA-USDT', 'DOGE-USDT', 'DOT-USDT', 'MATIC-USDT', 'LTC-USDT'
+]
 
-RISK_PERCENT = 1.0          # 1 % от equity на сделку
+RISK_PERCENT = 1.0          # 1 % от equity
 STOP_LOSS_PCT = 1.5
 TAKE_PROFIT_PCT = 3.0
 LSTM_CONFIDENCE = 0.75
@@ -34,7 +39,7 @@ lstm_models = {}
 traders = {}
 last_signal_time = {}
 total_trades = 0
-equity = 100.0               # стартовый капитал (USDT)
+equity = 100.0              # стартовый капитал (USDT)
 
 
 def keep_alive():
@@ -52,11 +57,11 @@ def keep_alive():
 
 def run_strategy():
     global total_trades, equity
-    positions = 0
     while True:
         try:
             current_time = time.time()
             open_pos = sum(1 for s in SYMBOLS if traders[s].position is not None)
+
             for symbol in SYMBOLS:
                 if not lstm_models[symbol].is_trained:
                     continue
@@ -66,17 +71,15 @@ def run_strategy():
                 df = get_bars(symbol, TIMEFRAME, LOOKBACK)
                 if df is None or len(df) < 100:
                     continue
-                df = calculate_strategy_signals(df, 60)
-                buy_signal = df['buy_signal'].iloc[-1]
-                sell_signal = df['sell_signal'].iloc[-1]
-                long_score = df['long_score'].iloc[-1]
-                short_score = df['short_score'].iloc[-1]
+                df = calculate_strategy_signals(df, symbol, 60)   # ← funding фильтр внутри
 
                 prob = lstm_models[symbol].predict_next(df)
                 if prob < LSTM_CONFIDENCE:
                     continue
 
-                strong = (buy_signal and long_score >= 4) or (sell_signal and short_score >= 4)
+                buy_signal = df['buy_signal'].iloc[-1]
+                sell_signal = df['sell_signal'].iloc[-1]
+                strong = (buy_signal and df['long_score'].iloc[-1] >= 4) or (sell_signal and df['short_score'].iloc[-1] >= 4)
                 if not strong:
                     continue
 
@@ -116,7 +119,7 @@ def start_all():
             lstm_models[s] = model
             traders[s] = BingXTrader(symbol=s, use_demo=True, leverage=3)
         else:
-            lstm_models[s] = LSTMPredictor()
+            lstm_models[s] = EnsemblePredictor()   # пустой, будет обучен
             traders[s] = BingXTrader(symbol=s, use_demo=True, leverage=3)
             to_train.append(s)
 
@@ -124,7 +127,7 @@ def start_all():
         logger.info(f"К обучению: {len(to_train)} пар")
         initial_train_all(to_train, epochs=5)
         for s in to_train:
-            lstm_models[s] = load_model(s) or LSTMPredictor()
+            lstm_models[s] = load_model(s) or EnsemblePredictor()
 
     logger.info("Запуск фонового переобучения (24 ч)...")
     threading.Thread(target=sequential_trainer, args=(SYMBOLS, 3600 * 24, 2), daemon=True).start()
@@ -133,12 +136,12 @@ def start_all():
     threading.Thread(target=run_strategy, daemon=True).start()
 
     threading.Thread(target=keep_alive, daemon=True).start()
-    logger.info("Бот запущен: тренд + лимитки + Kelly + ≤3 поз.")
+    logger.info("Бот запущен: тренд + funding + ensemble + ≤3 поз.")
 
 
 @app.route('/')
 def wake_up():
-    trained = sum(1 for m in lstm_models.values() if m.is_trained)
+    trained = sum(1 for m in lstm_models.values() if getattr(m, 'is_trained', False))
     return f"✅ Quantum Edge Bot LIVE! Обучено: {trained}/{len(SYMBOLS)}", 200
 
 
