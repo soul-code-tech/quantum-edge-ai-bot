@@ -5,8 +5,8 @@ import pickle
 import subprocess
 import shutil
 from data_fetcher import get_bars
-from lstm_model import LSTMPredictor
 from strategy import calculate_strategy_signals
+from lstm_model import LSTMPredictor
 import ccxt
 
 MODEL_DIR = "/tmp/lstm_weights"
@@ -14,7 +14,7 @@ os.makedirs(MODEL_DIR, exist_ok=True)
 
 REPO_ROOT   = os.path.dirname(os.path.abspath(__file__))
 WEIGHTS_DIR = os.path.join(REPO_ROOT, "weights")
-REMOTE_URL  = "https://github.com/soul-code-tech/quantum-edge-ai-bot.git"
+REPO_URL    = "github.com/soul-code-tech/quantum-edge-ai-bot.git"
 
 def model_path(symbol: str) -> str:
     return os.path.join(MODEL_DIR, symbol.replace("-", "") + ".pkl")
@@ -56,7 +56,7 @@ def train_one(symbol: str, lookback: int = 60, epochs: int = 5) -> bool:
         return False
 
 def save_weights_to_github(symbol: str):
-    """Копирует веса в локальную папку weights и пушит ветку weights на GitHub."""
+    """Сохраняет веса в папку weights и пушит ветку weights на GitHub с токеном."""
     try:
         os.makedirs(WEIGHTS_DIR, exist_ok=True)
         src = model_path(symbol)
@@ -65,14 +65,23 @@ def save_weights_to_github(symbol: str):
 
         os.chdir(REPO_ROOT)
 
-        # Настраиваем Git-автора
+        # Git-автор
         subprocess.run(["git", "config", "user.email", "bot@quantum-edge.ai"], check=True)
         subprocess.run(["git", "config", "user.name", "QuantumEdge-Bot"], check=True)
 
-        # Добавляем remote (если ещё не добавлен)
-        subprocess.run(["git", "remote", "add", "origin", REMOTE_URL], check=False)
+        token = os.environ.get("GH_TOKEN")
+        if not token:
+            print("❌ GH_TOKEN не установлен – пропускаю пуш.")
+            return
 
-        # Коммит и пуш
+        # Удаляем старый origin и добавляем новый с токеном
+        subprocess.run(["git", "remote", "remove", "origin"], check=False)
+        subprocess.run(
+            ["git", "remote", "add", "origin",
+             f"https://{token}@{REPO_URL}"],
+            check=True
+        )
+
         subprocess.run(["git", "checkout", "-B", "weights"], check=True)
         subprocess.run(["git", "add", "weights/"], check=True)
         subprocess.run(["git", "commit", "-m", f"update {symbol} weights"], check=True)
