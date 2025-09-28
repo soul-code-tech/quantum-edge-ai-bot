@@ -20,15 +20,19 @@ REPO_URL = "github.com/soul-code-tech/quantum-edge-ai-bot.git"
 def model_path(symbol: str) -> str:
     return os.path.join(WEIGHTS_DIR, symbol.replace("-", "") + ".pkl")
 
-# trainer.py  (функция market_exists)
 def market_exists(symbol: str) -> bool:
+    """
+    Проверяет НАЛИЧИЕ символа в BingX-Swap через exchange.market(symbol)
+    Возвращает True, если пара существует и не выбрасывает исключение.
+    """
     try:
         exchange = ccxt.bingx({"options": {"defaultType": "swap"}})
         exchange.load_markets()
-        # ← проверяем ИСХОДНЫЙ тикер с дефисом
-        return symbol in exchange.markets
+        # ← передаём ИСХОДНЫЙ тикер с дефисом
+        _ = exchange.market(symbol)   # выбросит, если нет
+        return True
     except Exception as e:
-        logger.error(f"market_exists {symbol}: {e}")
+        logger.warning(f"market_exists {symbol}: {e}")
         return False
 
 def is_model_fresh(symbol: str, max_age_hours: int = 24) -> bool:
