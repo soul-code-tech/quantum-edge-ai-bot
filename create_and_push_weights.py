@@ -6,7 +6,6 @@ import sys
 from data_fetcher import get_bars
 from strategy import calculate_strategy_signals
 from lstm_model import LSTMPredictor
-from trainer import model_path           # чтобы узнать имя файла
 
 SYMBOLS = [
     'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT',
