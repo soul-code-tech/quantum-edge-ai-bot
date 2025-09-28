@@ -63,6 +63,11 @@ def save_weights_to_github(symbol: str):
         shutil.copy(src, dst)
 
         os.chdir(REPO_ROOT)
+
+        # ➜➜➜  НАСТРОЙКА Git-автора  ➜➜➜
+        subprocess.run(["git", "config", "user.email", "bot@quantum-edge.ai"], check=True)
+        subprocess.run(["git", "config", "user.name", "QuantumEdge-Bot"], check=True)
+
         subprocess.run(["git", "checkout", "-B", "weights"], check=True)
         subprocess.run(["git", "add", "weights/"], check=True)
         subprocess.run(["git", "commit", "-m", f"update {symbol} weights"], check=True)
