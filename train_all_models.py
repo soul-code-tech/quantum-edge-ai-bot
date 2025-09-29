@@ -1,18 +1,24 @@
 # train_all_models.py
 import os
+os.environ["WEIGHTS_DIR"] = "weights"
+
 from config import SYMBOLS
 from trainer import train_one
 
-MODEL_DIR = "weights"
-os.makedirs(MODEL_DIR, exist_ok=True)
+os.makedirs("weights", exist_ok=True)
 
-print(f"🤖 Начинаем обучение для {len(SYMBOLS)} пар: {SYMBOLS}")
+print("=" * 60)
+print("🤖 GitHub Action: начинаем обучение моделей")
+print("📁 Веса будут сохранены в папку weights/")
+print("=" * 60)
+
 ok = 0
 for s in SYMBOLS:
-    print(f"🧠 Обучаем {s}...")
+    print(f"🧠 Action обучает {s} (5 эпох)...")
     if train_one(s, epochs=5):
         ok += 1
-        print(f"✅ {s} обучена")
+        print(f"✅ {s} обучена и сохранена в weights/")
     else:
-        print(f"❌ {s} не обучена")
-print(f"✅ Обучено: {ok}/{len(SYMBOLS)} моделей")
+        print(f"❌ {s} не обучена — пропускаем")
+print(f"📊 Итог: {ok}/{len(SYMBOLS)} моделей обучено")
+print("✅ GitHub Action завершил обучение")
