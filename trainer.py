@@ -22,7 +22,6 @@ def _log(stage: str, symbol: str, msg: str):
 def model_path(symbol: str) -> str:
     return os.path.join(MODEL_DIR, symbol.replace("-", "") + ".pkl")
 
-# ---------- EXPORTED FUNCTIONS ----------
 def download_weights():
     _log("WEIGHTS", "ALL", "⬇️ Начинаем скачивание весов с GitHub")
     zip_path = "/tmp/weights.zip"
@@ -52,30 +51,65 @@ def download_weights():
     except Exception as e:
         _log("WEIGHTS", "ALL", f"❌ Ошибка загрузки весов: {e}")
 
+def market_exists(symbol: str) -> bool:
+    try:
+        exchange = ccxt.bingx({'options': {'defaultType': 'swap'}, 'enableRateLimit': True})
+        # ← УБРАНО exchange.load_markets() здесь
+        if symbol in exchange.markets:
+            market = exchange.markets[symbol]
+            return market.get('type') == 'swap' and market.get('active')
+        return False
+    except Exception as e:
+        logger.warning(f"market_exists({symbol}) error: {e}")
+        return False
+
+def validate_model(model, df, bars_back=400):
+    try:
+        data = model.prepare_features(df.tail(bars_back))
+        if len(data) < 100:
+            return False
+        X, y = model.create_sequences(data)
+        if len(X) < 20:
+            return False
+        X = X.reshape((X.shape[0], X.shape[1], 5))
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+        model.build_model((X.shape[1], X.shape[2]))
+        model.model.fit(X_train, y_train, epochs=1, verbose=0)
+        _, acc = model.model.evaluate(X_test, y_test, verbose=0)
+        logger.info(f"✅ Валидация {model_path('dummy').split('/')[-1]}: acc={acc:.3f}")
+        return acc >= 0.52
+    except Exception as e:
+        logger.error(f"Валидация провалена: {e}")
+        return False
+
 def train_one(symbol: str, lookback: int = 60, epochs: int = 5) -> bool:
     try:
-        from config import SYMBOLS          # локальный импорт, чтобы избежать цикла
-        if symbol not in SYMBOLS:
+        if not market_exists(symbol):
+            _log("TRAIN", symbol, "Рынок не существует на BingX – пропускаем")
             return False
-        # (остальной код без изменений)
+
         _log("TRAIN", symbol, f"Начинаем обучение ({epochs} эпох)")
         df = get_bars(symbol, "1h", 500)
         if df is None or len(df) < 300:
             _log("TRAIN", symbol, "Недостаточно данных – пропускаем")
             return False
+
         df = calculate_strategy_signals(df, symbol, 60)
         model = LSTMPredictor(lookback=lookback)
         model.symbol = symbol
         model.train(df, epochs=epochs, bars_back=400)
+
         if not validate_model(model, df):
             _log("TRAIN", symbol, "Модель не прошла валидацию – пропускаем")
             return False
+
         weight_file = model_path(symbol).replace(".pkl", ".weights.h5")
         model.model.save_weights(weight_file)
         with open(model_path(symbol), "wb") as fh:
             pickle.dump({"scaler": model.scaler}, fh)
         _log("TRAIN", symbol, "Модель прошла валидацию, сохраняем веса")
         return True
+
     except Exception as e:
         _log("TRAIN", symbol, f"❌ Ошибка обучения: {e}")
         return False
