@@ -1,4 +1,3 @@
-# trader.py
 import os
 import logging
 import ccxt
@@ -20,15 +19,14 @@ class BingXTrader:
         })
         if use_demo:
             self.exchange.set_sandbox_mode(True)
-        self._set_leverage(leverage, "LONG")   # пока фиксированно
+        self._set_leverage(leverage, "LONG")
         self.position = None
         self.trailing_stop_price = None
         self.trailing_distance_percent = 1.0
 
-    def _set_leverage(self, leverage: int, side: str):
+    def _set_leverage(self, leverage: int, side: str = "LONG"):
         try:
-            # ← ЛЕНИВАЯ загрузка рынков
-            self.exchange.load_markets()
+            self.exchange.load_markets()  # ленивая
             self.exchange.set_leverage(leverage, symbol=self.symbol, params={'side': side})
             logger.info(f"✅ {self.symbol}: плечо установлено на {leverage}x {side}")
         except Exception as e:
@@ -36,8 +34,7 @@ class BingXTrader:
 
     def place_order(self, side, amount, stop_loss_percent=1.5, take_profit_percent=3.0):
         try:
-            # ← ЛЕНИВАЯ загрузка рынков ТОЛЬКО здесь
-            self.exchange.load_markets()
+            self.exchange.load_markets()  # ленивая
             if self.symbol not in self.exchange.markets:
                 logger.warning(f"{self.symbol} отсутствует на BingX – пропускаем")
                 return None
@@ -70,7 +67,6 @@ class BingXTrader:
             logger.info(f"⛔ Стоп-лосс: {stop_loss_price:.2f} ({stop_loss_percent}%)")
             logger.info(f"🎯 Тейк-профит: {take_profit_price:.2f} ({take_profit_percent}%)")
 
-            # стоп-лосс
             self.exchange.create_order(
                 symbol=self.symbol,
                 type='stop_market',
@@ -78,7 +74,6 @@ class BingXTrader:
                 amount=amount,
                 params={'stopPrice': stop_loss_price, 'reduceOnly': True}
             )
-            # тейк-профит
             self.exchange.create_order(
                 symbol=self.symbol,
                 type='limit',
