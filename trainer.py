@@ -17,36 +17,40 @@ logger = logging.getLogger("trainer")
 MODEL_DIR = "/tmp/lstm_weights"
 os.makedirs(MODEL_DIR, exist_ok=True)
 
+def _log(stage: str, symbol: str, msg: str):
+    logger.info(f"[{stage}] {symbol}: {msg}")
+
 def model_path(symbol: str) -> str:
     return os.path.join(MODEL_DIR, symbol.replace("-", "") + ".pkl")
 
 def download_weights():
-    logger.info("⬇️ Скачиваем веса из GitHub...")
+    _log("WEIGHTS", "ALL", "⬇️ Начинаем скачивание весов с GitHub")
     zip_path = "/tmp/weights.zip"
     try:
-        r = requests.get("https://github.com/soul-code-tech/quantum-edge-ai-bot/archive/refs/heads/weights.zip", stream=True, timeout=30)
+        r = requests.get("https://github.com/soul-code-tech/quantum-edge-ai-bot/archive/refs/heads/weights.zip",
+                         stream=True, timeout=30)
         if r.status_code != 200:
-            logger.warning(f"GitHub вернул {r.status_code} — пропускаем загрузку")
+            _log("WEIGHTS", "ALL", f"⚠️ GitHub вернул {r.status_code} — пропускаем загрузку")
             return
         with open(zip_path, "wb") as f:
             for chunk in r.iter_content(chunk_size=8192):
                 f.write(chunk)
         if not zipfile.is_zipfile(zip_path):
-            logger.warning("Скачанный файл не ZIP")
+            _log("WEIGHTS", "ALL", "⚠️ Скачанный файл не ZIP")
             os.remove(zip_path)
             return
         with zipfile.ZipFile(zip_path, 'r') as z:
             z.extractall("/tmp")
-        src = f"/tmp/quantum-edge-ai-bot-weights/weights"
+        src = "/tmp/quantum-edge-ai-bot-weights/weights"
         if os.path.exists(src):
             shutil.rmtree(MODEL_DIR, ignore_errors=True)
             shutil.move(src, MODEL_DIR)
-            logger.info("✅ Веса загружены из GitHub")
+            _log("WEIGHTS", "ALL", "✅ Архив разархивирован, веса готовы к загрузке")
         else:
-            logger.warning("Папка weights не найдена в архиве")
+            _log("WEIGHTS", "ALL", "⚠️ Папка weights не найдена в архиве")
         os.remove(zip_path)
     except Exception as e:
-        logger.error(f"Ошибка загрузки весов: {e}")
+        _log("WEIGHTS", "ALL", f"❌ Ошибка загрузки весов: {e}")
 
 def market_exists(symbol: str) -> bool:
     try:
@@ -82,50 +86,52 @@ def validate_model(model, df, bars_back=400):
 def train_one(symbol: str, lookback: int = 60, epochs: int = 5) -> bool:
     try:
         if not market_exists(symbol):
-            logger.info(f"❌ {symbol}: рынок не существует на BingX – пропускаем.")
+            _log("TRAIN", symbol, "Рынок не существует на BingX – пропускаем")
             return False
 
-        logger.info(f"🧠 LSTM-обучение {symbol} ({epochs} эпох)")
+        _log("TRAIN", symbol, f"Начинаем обучение ({epochs} эпох)")
         df = get_bars(symbol, "1h", 500)
         if df is None or len(df) < 300:
-            logger.warning(f"⚠️ Недостаточно данных для {symbol}")
+            _log("TRAIN", symbol, "Недостаточно данных – пропускаем")
             return False
 
         df = calculate_strategy_signals(df, symbol, 60)
         model = LSTMPredictor(lookback=lookback)
+        model.symbol = symbol  # для логов lstm
         model.train(df, epochs=epochs, bars_back=400)
 
         if not validate_model(model, df):
-            logger.warning(f"⚠️ Модель {symbol} не прошла валидацию")
+            _log("TRAIN", symbol, "Модель не прошла валидацию – пропускаем")
             return False
 
         weight_file = model_path(symbol).replace(".pkl", ".weights.h5")
         model.model.save_weights(weight_file)
         with open(model_path(symbol), "wb") as fh:
             pickle.dump({"scaler": model.scaler}, fh)
-        logger.info(f"✅ Модель {symbol} сохранена локально")
+        _log("TRAIN", symbol, "Модель прошла валидацию, сохраняем веса")
         return True
 
     except Exception as e:
-        logger.error(f"❌ Ошибка обучения {symbol}: {e}")
+        _log("TRAIN", symbol, f"❌ Ошибка обучения: {e}")
         return False
 
 def load_model(symbol: str, lookback: int = 60):
     path = model_path(symbol)
     if not os.path.exists(path):
-        logger.info(f"⚠️ Файл модели {symbol} не найден: {path}")
+        _log("LOAD", symbol, "Файл модели не найден")
         return None
     try:
         with open(path, "rb") as fh:
             bundle = pickle.load(fh)
         m = LSTMPredictor(lookback=lookback)
+        m.symbol = symbol
         m.build_model((lookback, 5))
         m.model.load_weights(path.replace(".pkl", ".weights.h5"))
         m.is_trained = True
-        logger.info(f"✅ Модель {symbol} загружена из файла")
+        _log("LOAD", symbol, "pickle-файл прочитан, веса загружены в модель")
         return m
     except Exception as e:
-        logger.error(f"⚠️ Ошибка загрузки модели {symbol}: {e}")
+        _log("LOAD", symbol, f"❌ Ошибка загрузки модели: {e}")
         return None
 
 def initial_train_all(symbols, epochs=5):
@@ -134,9 +140,9 @@ def initial_train_all(symbols, epochs=5):
     for s in symbols:
         if train_one(s, epochs=epochs):
             ok += 1
-            logger.info(f"✅ {s} обучена")
+            _log("TRAIN", s, "Обучение завершено")
         else:
-            logger.warning(f"❌ {s} не обучена")
+            _log("TRAIN", s, "Обучение провалено")
         time.sleep(2)
     logger.info(f"🧠 Первичное обучение завершено: {ok}/{len(symbols)} обучено.")
 
@@ -144,12 +150,12 @@ def sequential_trainer(symbols, interval=3600, epochs=2):
     idx = 0
     while True:
         sym = symbols[idx % len(symbols)]
-        logger.info(f"🔁 Проверяем модель {sym} для дообучения...")
-        if not load_model(sym):
-            logger.info(f"⏳ Обучаем {sym} с нуля...")
+        _log("RETRAIN", sym, "Начинаем дообучение (2 эпохи)")
+        if load_model(sym):
+            _log("RETRAIN", sym, "Модель загружена – дообучаем")
             train_one(sym, epochs=epochs)
         else:
-            logger.info(f"⏳ Дообучаем {sym}...")
+            _log("RETRAIN", sym, "Модель не найдена – обучаем с нуля")
             train_one(sym, epochs=epochs)
         idx += 1
         time.sleep(interval)
