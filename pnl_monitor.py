@@ -9,15 +9,20 @@ import logging
 from datetime import datetime, timedelta
 from flask import Blueprint, jsonify, render_template_string
 
-from config import SYMBOLS  # ← безопасный импорт
-
-logger = logging.getLogger("bot")
+logger = logging.getLogger("pnl_monitor")
 
 PNL_BP = Blueprint('pnl', __name__)
-JSON_FILE = "/tmp/pnl_history.json"  # ← /tmp для Render
+JSON_FILE = "pnl_history.json"
 
+def fetch_closed_pnl(api_key, secret, use_demo=False, symbols=None):
+    """
+    Берём fetch_my_trades() ПО СИМВОЛУ и фильтруем reduceOnly = True
+    symbols: список строк, например ['BTC-USDT', ...]
+    """
+    if symbols is None:
+        symbols = ['BTC-USDT']  # fallback
 
-def fetch_closed_pnl(api_key, secret, use_demo=False):
+    all_trades = []
     try:
         exchange = ccxt.bingx({
             'apiKey': api_key,
@@ -29,39 +34,29 @@ def fetch_closed_pnl(api_key, secret, use_demo=False):
             exchange.set_sandbox_mode(True)
 
         since = exchange.parse8601((datetime.utcnow() - timedelta(days=7)).isoformat())
-        all_trades = []
-
-        for sym in SYMBOLS:
+        for sym in symbols:
             try:
                 trades = exchange.fetch_my_trades(sym, since=since)
-                # Фильтруем закрытие позиций (reduceOnly)
-                for t in trades:
-                    if t.get('info', {}).get('reduceOnly') is True:
-                        all_trades.append(t)
+                all_trades.extend([t for t in trades if t.get('info', {}).get('reduceOnly') is True])
             except Exception as e:
-                logger.debug(f"Нет trades для {sym}: {e}")
-
-        if not all_trades:
-            return pd.DataFrame(columns=['timestamp', 'symbol', 'income', 'balance'])
+                logger.warning(f"Нет trades {sym}: {e}")
 
         df = pd.DataFrame(all_trades)
+        if df.empty:
+            return pd.DataFrame(columns=['timestamp', 'symbol', 'income', 'balance'])
+
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
         df['price'] = pd.to_numeric(df['price'])
         df['amount'] = pd.to_numeric(df['amount'])
-        df['side'] = df['side'].astype(str)
-
-        # Рассчитываем PnL
-        df['income'] = df.apply(
-            lambda row: row['amount'] * row['price'] if row['side'] == 'sell' else -row['amount'] * row['price'],
-            axis=1
-        )
+        # доход = (sell - buy) * amount
+        df['income'] = (df['side'] == 'sell').astype(int) * df['price'] * df['amount'] - \
+                       (df['side'] == 'buy').astype(int) * df['price'] * df['amount']
         df = df[['timestamp', 'symbol', 'income']].sort_values('timestamp')
         df['balance'] = df['income'].cumsum()
         return df
     except Exception as e:
         logger.error(f"fetch_closed_pnl: {e}")
         return pd.DataFrame()
-
 
 def calc_stats(df: pd.DataFrame) -> dict:
     if df.empty:
@@ -74,13 +69,12 @@ def calc_stats(df: pd.DataFrame) -> dict:
             'updated': datetime.utcnow().isoformat()
         }
 
-    equity = (100.0 + df['income'].cumsum()).tolist()
+    equity = df['balance'].tolist()
     peak = pd.Series(equity).cummax()
     drawdown = ((pd.Series(equity) - peak) / peak * 100).tolist()
-    max_dd = min(drawdown) if drawdown else 0.0
-
+    max_dd = max(drawdown) if drawdown else 0.0
     returns = pd.Series(equity).pct_change().dropna()
-    sharpe = (returns.mean() / returns.std() * (365**0.5)) if returns.std() != 0 else 0.0
+    sharpe = returns.mean() / returns.std() * (365**0.5) if returns.std() else 0.0
 
     return {
         'equity': equity,
@@ -90,19 +84,6 @@ def calc_stats(df: pd.DataFrame) -> dict:
         'total_pnl': round(equity[-1] - 100.0, 4),
         'updated': datetime.utcnow().isoformat()
     }
-
-
-@PNL_BP.route("/pnl")
-def pnl_json():
-    df = fetch_closed_pnl(os.getenv('BINGX_API_KEY'), os.getenv('BINGX_SECRET_KEY'), use_demo=False)
-    stats = calc_stats(df)
-    try:
-        with open(JSON_FILE, 'w') as f:
-            json.dump(stats, f)
-    except Exception as e:
-        logger.warning(f"Не удалось сохранить PnL в {JSON_FILE}: {e}")
-    return jsonify(stats)
-
 
 HTML_PAGE = """
 <!DOCTYPE html>
@@ -137,10 +118,7 @@ HTML_PAGE = """
             options: {
                 responsive: true,
                 plugins: {
-                    title: { 
-                        display: true, 
-                        text: `Total PnL: ${data.total_pnl} USDT | Max DD: ${data.max_dd}% | Sharpe: ${data.sharpe}` 
-                    }
+                    title: { display: true, text: `Total PnL: ${data.total_pnl} USDT | Max DD: ${data.max_dd}% | Sharpe: ${data.sharpe}` }
                 }
             }
         });
@@ -150,31 +128,40 @@ HTML_PAGE = """
 </html>
 """
 
+@PNL_BP.route("/pnl")
+def pnl_json():
+    # ← передаём SYMBOLS из main.py
+    from main import SYMBOLS
+    df = fetch_closed_pnl(os.getenv('BINGX_API_KEY'), os.getenv('BINGX_SECRET_KEY'), use_demo=False, symbols=SYMBOLS)
+    stats = calc_stats(df)
+    with open("pnl_history.json", 'w') as f:
+        json.dump(stats, f)
+    return jsonify(stats)
+
 @PNL_BP.route("/chart")
 def chart_html():
     return render_template_string(HTML_PAGE)
-
 
 def start_pnl_monitor():
     def monitor():
         while True:
             try:
-                df = fetch_closed_pnl(os.getenv('BINGX_API_KEY'), os.getenv('BINGX_SECRET_KEY'), use_demo=False)
+                # ← передаём SYMBOLS из main.py
+                from main import SYMBOLS
+                df = fetch_closed_pnl(os.getenv('BINGX_API_KEY'), os.getenv('BINGX_SECRET_KEY'), use_demo=False, symbols=SYMBOLS)
                 stats = calc_stats(df)
-                try:
-                    with open(JSON_FILE, 'w') as f:
-                        json.dump(stats, f)
-                except Exception as e:
-                    logger.warning(f"Не удалось сохранить PnL: {e}")
+                with open("pnl_history.json", 'w') as f:
+                    json.dump(stats, f)
 
+                # пишем итог каждый день в 00:05 UTC
                 now = datetime.utcnow()
-                if now.hour == 0 and 0 <= now.minute <= 5:
+                if now.hour == 0 and now.minute <= 5:
                     logger.info(f"DAILY-PnL: total={stats['total_pnl']} max_dd={stats['max_dd']}% sharpe={stats['sharpe']}")
 
-                time.sleep(30 * 60)  # 30 минут
+                time.sleep(30 * 60)   # 30 минут
             except Exception as e:
                 logger.error(f"pnl_monitor: {e}")
                 time.sleep(300)
 
     threading.Thread(target=monitor, daemon=True).start()
-    logger.info("✅ PnL-мониторинг запущен (обновление каждые 30 мин)")
+    logger.info("PnL-мониторинг запущен (обновление каждые 30 мин)")
