@@ -25,7 +25,6 @@ def download_weights():
     logger.info("⬇️ Скачиваем веса из GitHub...")
     zip_path = "/tmp/weights.zip"
     try:
-        # ✅ ИСПРАВЛЕНО: URL без пробелов
         r = requests.get("https://github.com/soul-code-tech/quantum-edge-ai-bot/archive/refs/heads/weights.zip", stream=True, timeout=30)
         if r.status_code != 200:
             logger.warning(f"GitHub вернул {r.status_code} — пропускаем загрузку")
@@ -54,16 +53,9 @@ def market_exists(symbol: str) -> bool:
     try:
         exchange = ccxt.bingx({'options': {'defaultType': 'swap'}, 'enableRateLimit': True})
         exchange.load_markets()
-        # ✅ Проверяем тип рынка
         if symbol in exchange.markets:
             market = exchange.markets[symbol]
-            exists = market.get('type') == 'swap' and market.get('active')
-            if exists:
-                logger.info(f"✅ {symbol} — поддерживается как своп")
-            else:
-                logger.warning(f"❌ {symbol} — не активен как своп")
-            return exists
-        logger.warning(f"❌ {symbol} — рынок не найден")
+            return market.get('type') == 'swap' and market.get('active')
         return False
     except Exception as e:
         logger.warning(f"market_exists({symbol}) error: {e}")
@@ -128,7 +120,7 @@ def load_model(symbol: str, lookback: int = 60):
         with open(path, "rb") as fh:
             bundle = pickle.load(fh)
         logger.info(f"✅ Модель {symbol} загружена из файла")
-        return bundle["ensemble"]   # ✅ возвращаем объект ensemble
+        return bundle["ensemble"]
     except Exception as e:
         logger.error(f"⚠️ Ошибка загрузки модели {symbol}: {e}")
         return None
@@ -137,7 +129,6 @@ def initial_train_all(symbols, epochs=5):
     logger.info(f"🧠 Первичное обучение {len(symbols)} пар: {symbols}")
     ok = 0
     for s in symbols:
-        logger.info(f"⏳ Обучаем {s}...")
         if train_one(s, epochs=epochs):
             ok += 1
             logger.info(f"✅ {s} обучена")
@@ -146,15 +137,19 @@ def initial_train_all(symbols, epochs=5):
         time.sleep(2)
     logger.info(f"🧠 Первичное обучение завершено: {ok}/{len(symbols)} обучено.")
 
-def sequential_trainer(symbols, interval=3600 * 24, epochs=2):
+def sequential_trainer(symbols, interval=3600, epochs=2):
+    """
+    Дообучает каждую модель раз в `interval` секунд на `epochs` эпох
+    """
     idx = 0
     while True:
         sym = symbols[idx % len(symbols)]
         logger.info(f"🔁 Проверяем модель {sym} для дообучения...")
         if not load_model(sym):
-            logger.info(f"⏳ Дообучаем {sym}...")
+            logger.info(f"⏳ Обучаем {sym} с нуля...")
             train_one(sym, epochs=epochs)
         else:
-            logger.info(f"✅ Модель {sym} уже есть — пропускаем")
+            logger.info(f"⏳ Дообучаем {sym}...")
+            train_one(sym, epochs=epochs)
         idx += 1
         time.sleep(interval)
