@@ -10,7 +10,7 @@ from data_fetcher import get_bars
 from strategy import calculate_strategy_signals
 from trader import BingXTrader
 from lstm_model import EnsemblePredictor
-from trainer import train_one, load_model, download_weights
+from trainer import train_one, load_model, download_weights, market_exists
 from position_monitor import start_position_monitor
 from signal_cache import is_fresh_signal
 from pnl_monitor import PNL_BP, start_pnl_monitor
@@ -47,6 +47,7 @@ def keep_alive():
         time.sleep(120)
 
 def run_strategy():
+    logger.info("🎯 Стратегия запущена")
     while True:
         try:
             for symbol in SYMBOLS:
@@ -77,6 +78,7 @@ def run_strategy():
                     side = 'buy' if buy_signal else 'sell'
                     atr = df['atr'].iloc[-1]
                     amount = max(0.001, (100 * RISK_PERCENT / 100) / (atr * 1.5))
+                    logger.info(f"🎯 [СИГНАЛ] {side.upper()} {symbol} | P={lstm_prob:.2%} | ATR={atr:.2f} | Amt={amount:.4f}")
                     traders[symbol].place_limit_order(
                         side=side,
                         amount=amount,
@@ -92,6 +94,7 @@ def run_strategy():
 
 def start_all():
     logger.info("=== СТАРТ start_all() ===")
+    logger.info(f"📋 Используем {len(SYMBOLS)} пар: {SYMBOLS}")
     download_weights()
     trained = 0
     for s in SYMBOLS:
@@ -99,6 +102,7 @@ def start_all():
         if model:
             lstm_models[s] = model
             trained += 1
+            logger.info(f"✅ Модель {s} загружена")
         else:
             logger.warning(f"⚠️ Модель {s} отсутствует — будет обучена")
     if trained == 0:
@@ -107,14 +111,22 @@ def start_all():
             if train_one(s, epochs=5):
                 lstm_models[s].is_trained = True
                 logger.info(f"✅ {s} обучена — включена в торговлю")
+            else:
+                logger.warning(f"❌ {s} не обучена — пропускаем")
             time.sleep(5)
     else:
         missing = [s for s in SYMBOLS if not getattr(lstm_models[s], 'is_trained', False)]
-        for s in missing:
-            if train_one(s, epochs=5):
-                lstm_models[s].is_trained = True
-                logger.info(f"✅ {s} обучена — включена в торговлю")
-            time.sleep(5)
+        if missing:
+            logger.info(f"🧠 Обучаем недостающие: {missing}")
+            for s in missing:
+                if train_one(s, epochs=5):
+                    lstm_models[s].is_trained = True
+                    logger.info(f"✅ {s} обучена — включена в торговлю")
+                else:
+                    logger.warning(f"❌ {s} не обучена — пропускаем")
+                time.sleep(5)
+        else:
+            logger.info("✅ Все модели загружены — торговля начата")
 
     threading.Thread(target=run_strategy, daemon=True).start()
     start_position_monitor(traders, SYMBOLS)
