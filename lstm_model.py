@@ -66,6 +66,7 @@ class EnsemblePredictor:
         X_stack = []
         for m in self.models:
             m.train(df, epochs=epochs, bars_back=bars_back)
+            # получаем вероятности для всех баров (а не только последней)
             probs = []
             data = m.prepare_features(df.tail(bars_back))
             for i in range(m.lookback, len(data)):
