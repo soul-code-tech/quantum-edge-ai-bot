@@ -18,28 +18,15 @@ LSTM_CONFIDENCE = 0.75
 TIMEFRAME = "1h"
 COOLDOWN_SECONDS = 3600
 UPDATE_TRAILING_INTERVAL = 300
-SLIP_BUFFER = 0.0005          # 0,05 % «подтираем» цену, чтобы 100 % попасть в мейкер
 
 # ---------- Telegram ----------
 TG_TOKEN = os.getenv("TG_TOKEN")
 TG_CHAT = os.getenv("TG_CHAT")
 
-# ---------- реальные swap-тикеры BingX (проверены 29.09.2025) ----------
-REAL_SWAP_TICKERS = [
-    'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT', 'XRP-USDT',
-    'ADA-USDT', 'DOGE-USDT', 'MATIC-USDT', 'LTC-USDT', 'LINK-USDT'
+# ✅ ИСПРАВЛЕНО: используйте только те пары, которые есть на BingX
+# Запустите check_bingx_swaps.py для проверки
+SYMBOLS = [
+    'BTC-USDT',  # проверьте, есть ли на BingX
+    'ETH-USDT',  # проверьте, есть ли на BingX
+    # добавьте другие, если есть
 ]
-
-# ---------- минимальные лоты ----------
-MIN_LOTS = {
-    'BTC-USDT': 0.001,
-    'ETH-USDT': 0.001,
-    'BNB-USDT': 0.01,
-    'SOL-USDT': 0.01,
-    'XRP-USDT': 1,
-    'ADA-USDT': 1,
-    'DOGE-USDT': 1,
-    'DOT-USDT': 0.1,
-    'MATIC-USDT': 1,
-    'LTC-USDT': 0.01
-}
