@@ -164,3 +164,10 @@ if __name__ == "__main__":
     threading.Thread(target=start_all, daemon=True).start()
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
+    # Подключаем PnL-мониторинг
+try:
+    from pnl_monitor import PNL_BP, start_pnl_monitor
+    app.register_blueprint(PNL_BP)
+    start_pnl_monitor()
+except Exception as e:
+    logger.warning(f"Не удалось запустить PnL-мониторинг: {e}")
