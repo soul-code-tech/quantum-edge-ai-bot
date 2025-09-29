@@ -44,5 +44,10 @@ SYMBOLS = [
     'ETH-USDT',
     'SOL-USDT',
     'BNB-USDT',
-    # добавьте другие, если нужно
+    'XRP-USDT',
+    'DOGE-USDT',
+    'ADA-USDT',
+    'AVAX-USDT',
+    'TON-USDT',
+    'LINK-USDT'
 ]
