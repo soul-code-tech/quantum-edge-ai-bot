@@ -1,33 +1,36 @@
 # strategy.py
 import pandas as pd
-from ta.trend import EMAIndicator, SMAIndicator
 from ta.momentum import RSIIndicator
 from ta.volatility import AverageTrueRange
-from data_fetcher import get_funding_rate
-
-FR_THRESHOLD = 0.05   # 0,05 % / 8ч
+from ta.trend import SMAIndicator
 
 def calculate_strategy_signals(df, symbol: str, current_res_minutes=60):
-    rsi_len = 14 if current_res_minutes <= 60 else 21
+    if current_res_minutes <= 15:
+        rsi_len, atr_period = 7, 7
+    elif current_res_minutes <= 60:
+        rsi_len, atr_period = 14, 14
+    elif current_res_minutes <= 240:
+        rsi_len, atr_period = 21, 21
+    else:
+        rsi_len, atr_period = 28, 28
+
     df['rsi'] = RSIIndicator(df['close'], rsi_len).rsi()
     df['sma20'] = SMAIndicator(df['close'], 20).sma_indicator()
     df['sma50'] = SMAIndicator(df['close'], 50).sma_indicator()
-    df['atr'] = AverageTrueRange(df['high'], df['low'], df['close'], 14).average_true_range()
-    df['ema200'] = EMAIndicator(df['close'], 200).ema_indicator()
-    df['trend'] = (df['close'] > df['ema200']).astype(int)
+    df['atr'] = AverageTrueRange(df['high'], df['low'], df['close'], atr_period).average_true_range()
 
-    # --------- funding-rate фильтр ---------
-    current_funding = get_funding_rate(symbol)
-    df['funding_filter_long']  = (current_funding <= FR_THRESHOLD)
-    df['funding_filter_short'] = (current_funding >= -FR_THRESHOLD)
+    df['trend_score'] = 0
+    df.loc[df['close'] > df['sma20'], 'trend_score'] += 1
+    df.loc[df['close'] > df['sma50'], 'trend_score'] += 1
+    df.loc[df['sma20'] > df['sma50'], 'trend_score'] += 1
 
     df['vol_avg'] = df['volume'].rolling(20).mean()
     df['strong_volume'] = (df['volume'] > df['vol_avg']) & (df['volume'] > df['volume'].shift(1))
 
-    df['long_score']  = df['trend'] + (df['close'] > df['sma20']) + (df['sma20'] > df['sma50']) + df['strong_volume'] + (df['rsi'] > 55)
-    df['short_score'] = (1 - df['trend']) + (df['close'] < df['sma20']) + (df['sma20'] < df['sma50']) + df['strong_volume'] + (df['rsi'] < 45)
+    df['long_score'] = df['trend_score'] + df['strong_volume'].astype(int) + (df['rsi'] > 55).astype(int)
+    df['short_score'] = (3 - df['trend_score']) + df['strong_volume'].astype(int) + (df['rsi'] < 45).astype(int)
 
-    # --------- итоговый сигнал ---------
-    df['buy_signal']  = (df['long_score'] >= 4) & (df['trend'] == 1) & df['funding_filter_long']
-    df['sell_signal'] = (df['short_score'] >= 4) & (df['trend'] == 0) & df['funding_filter_short']
+    df['buy_signal'] = df['long_score'] >= 4
+    df['sell_signal'] = df['short_score'] >= 4
+
     return df
