@@ -13,9 +13,9 @@ from lstm_model import LSTMPredictor
 from trainer import train_one, load_model, download_weights, sequential_trainer
 from position_monitor import start_position_monitor
 from signal_cache import is_fresh_signal
-from pnl_monitor import PNL_BP, start_pnl_monitor
-from config import USE_DEMO, LEVERAGE, RISK_PERCENT, STOP_LOSS_PCT, TAKE_PROFIT_PCT, LSTM_CONFIDENCE, TIMEFRAME, COOLDOWN_SECONDS, UPDATE_TRAILING_INTERVAL, TG_TOKEN, TG_CHAT, SYMBOLS
+from config import USE_DEMO, LEVERAGE, RISK_PERCENT, STOP_LOSS_PCT, TAKE_PROFIT_PCT, LSTM_CONFIDENCE, TIMEFRAME, COOLDOWN_SECONDS, SYMBOLS
 
+# === Логирование ===
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
@@ -23,31 +23,43 @@ logging.basicConfig(
 )
 logger = logging.getLogger("main")
 
+# === Flask ===
 app = Flask(__name__)
-app.register_blueprint(PNL_BP, url_prefix='/pnl')
 
+# === Хранилище ===
 lstm_models = {}
 traders = {}
 for s in SYMBOLS:
     lstm_models[s] = LSTMPredictor()
     traders[s] = BingXTrader(symbol=s, use_demo=USE_DEMO, leverage=LEVERAGE)
 
-def keep_alive():
-    host = os.environ.get("RENDER_EXTERNAL_HOSTNAME")
-    if not host:
-        logger.warning("RENDER_EXTERNAL_HOSTNAME не задан — keep-alive отключён")
-        return
-    url = f"https://{host}/health"
-    logger.info(f"🔁 Keep-alive включён: {url}")
-    while True:
-        try:
-            requests.get(url, timeout=10)
-        except Exception as e:
-            logger.debug(f"Keep-alive error: {e}")
-        time.sleep(120)
+# === Роуты ===
+@app.route('/')
+def wake_up():
+    active = sum(1 for m in lstm_models.values() if getattr(m, 'is_trained', False))
+    return f"✅ Quantum Edge AI Bot LIVE | Активных моделей: {active}/{len(SYMBOLS)}", 200
 
+@app.route('/health')
+def health_check():
+    return "OK", 200
+
+# === Первичное обучение (в фоне) ===
+def initial_training():
+    logger.info("=== Первичное обучение всех моделей (5 эпох) ===")
+    for symbol in SYMBOLS:
+        logger.info(f"🧠 Обучаем {symbol}...")
+        success = train_one(symbol, epochs=5)
+        if success:
+            lstm_models[symbol].is_trained = True
+            logger.info(f"✅ {symbol} обучен и сохранён в weights/")
+        else:
+            logger.warning(f"❌ {symbol} не обучен — пропускаем")
+        time.sleep(2)
+    logger.info("=== Первичное обучение завершено ===")
+
+# === Торговый цикл ===
 def run_strategy():
-    logger.info("🎯 Стратегия запущена")
+    logger.info("=== Торговый цикл запущен ===")
     while True:
         try:
             for symbol in SYMBOLS:
@@ -91,61 +103,48 @@ def run_strategy():
             logger.error(f"Ошибка в стратегии: {e}")
             time.sleep(60)
 
+# === Запуск системы ===
 def start_all():
-    logger.info("=== СТАРТ start_all() ===")
+    logger.info("=== СТАРТ СИСТЕМЫ (Web Service) ===")
     logger.info(f"📋 Используем {len(SYMBOLS)} пар: {SYMBOLS}")
+
+    # 1. Скачиваем веса
     download_weights()
+
+    # 2. Загружаем готовые
     trained = 0
     for s in SYMBOLS:
         model = load_model(s)
         if model:
             lstm_models[s] = model
+            lstm_models[s].is_trained = True
             trained += 1
-            logger.info(f"✅ Модель {s} загружена")
+            logger.info(f"✅ {s} загружена из weights/")
         else:
-            logger.warning(f"⚠️ Модель {s} отсутствует — будет обучена")
+            logger.warning(f"⚠️ {s} не найдена — будет обучена")
+
+    # 3. Запускаем обучение в фоне
     if trained == 0:
-        logger.info("🧠 Нет готовых моделей — начинаем первичное обучение по одной...")
-        for s in SYMBOLS:
-            if train_one(s, epochs=5):
-                lstm_models[s].is_trained = True
-                logger.info(f"✅ {s} обучена — включена в торговлю")
-            else:
-                logger.warning(f"❌ {s} не обучена — пропускаем")
-            time.sleep(5)
+        logger.info("🧠 Нет готовых моделей — начинаем первичное обучение (в фоне)...")
+        threading.Thread(target=initial_training, daemon=True).start()
     else:
         missing = [s for s in SYMBOLS if not getattr(lstm_models[s], 'is_trained', False)]
         if missing:
-            logger.info(f"🧠 Обучаем недостающие: {missing}")
-            for s in missing:
-                if train_one(s, epochs=5):
-                    lstm_models[s].is_trained = True
-                    logger.info(f"✅ {s} обучена — включена в торговлю")
-                else:
-                    logger.warning(f"❌ {s} не обучена — пропускаем")
-                time.sleep(5)
-        else:
-            logger.info("✅ Все модели загружены — торговля начата")
+            logger.info(f"🧠 Дообучаем недостающие (в фоне): {missing}")
+            threading.Thread(target=lambda: [train_one(s, epochs=5) and setattr(lstm_models[s], 'is_trained', True) for s in missing], daemon=True).start()
 
+    # 4. Торговля в фоне
     threading.Thread(target=run_strategy, daemon=True).start()
-    start_position_monitor(traders, SYMBOLS)
-    threading.Thread(target=keep_alive, daemon=True).start()
-    start_pnl_monitor()
 
-    # Запуск дообучения (каждый час, 2 эпохи)
+    # 5. Дообучение каждый час
     threading.Thread(target=sequential_trainer, args=(SYMBOLS, 3600, 2), daemon=True).start()
 
-    logger.info("🚀 Quantum Edge AI Bot полностью запущен!")
+    # 6. Монитор позиций
+    start_position_monitor(traders, SYMBOLS)
 
-@app.route('/')
-def wake_up():
-    active = sum(1 for m in lstm_models.values() if getattr(m, 'is_trained', False))
-    return f"✅ Quantum Edge AI Bot LIVE | Активных моделей: {active}/{len(SYMBOLS)}", 200
+    logger.info("🚀 Web Service полностью запущен (Flask + background threads)")
 
-@app.route('/health')
-def health_check():
-    return "OK", 200
-
+# === Flask старт ===
 if __name__ == "__main__":
     threading.Thread(target=start_all, daemon=True).start()
     port = int(os.environ.get("PORT", 10000))
