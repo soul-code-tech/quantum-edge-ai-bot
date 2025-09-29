@@ -130,7 +130,6 @@ HTML_PAGE = """
 
 @PNL_BP.route("/pnl")
 def pnl_json():
-    # ✅ Получаем SYMBOLS из config, а не из main
     from config import SYMBOLS
     df = fetch_closed_pnl(os.getenv('BINGX_API_KEY'), os.getenv('BINGX_SECRET_KEY'), use_demo=False, symbols=SYMBOLS)
     stats = calc_stats(df)
@@ -149,7 +148,6 @@ def start_pnl_monitor():
     def monitor():
         while True:
             try:
-                # ✅ Получаем SYMBOLS из config, а не из main
                 from config import SYMBOLS
                 df = fetch_closed_pnl(os.getenv('BINGX_API_KEY'), os.getenv('BINGX_SECRET_KEY'), use_demo=False, symbols=SYMBOLS)
                 stats = calc_stats(df)
