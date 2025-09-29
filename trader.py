@@ -26,18 +26,11 @@ class BingXTrader:
         self.trailing_stop_price = None
         self.trailing_distance_percent = 1.0
 
-    def _set_leverage(self, leverage):
+    def _set_leverage(self, leverage: int, side: str = "LONG"):
         try:
-            symbol_for_api = self.symbol.replace('-', '')
-            response = self.exchange.privatePostLinearSwapApiV1TradingSetLeverage({
-                'symbol': symbol_for_api,
-                'leverage': str(leverage)
-            })
-            if response.get('code') == 0:
-                logger.info(f"✅ {self.symbol}: Плечо установлено на {leverage}x")
-            else:
-                msg = response.get('msg', 'unknown')
-                logger.error(f"❌ Ошибка установки плеча: {msg}")
+            # ✅ Новый способ установки плеча через ccxt
+            self.exchange.set_leverage(leverage, symbol=self.symbol, params={'side': side})
+            logger.info(f"✅ {self.symbol}: Плечо установлено на {leverage}x {side}")
         except Exception as e:
             logger.warning(f"⚠️ Не удалось установить плечо для {self.symbol}: {e}")
 
@@ -53,11 +46,13 @@ class BingXTrader:
             order_id = market_order.get('id', 'N/A')
             logger.info(f"✅ Рыночный ордер исполнен: {order_id}")
 
+            # Получаем цену входа
             entry_price = market_order.get('price', None)
             if not entry_price:
                 ticker = self.exchange.fetch_ticker(self.symbol)
                 entry_price = ticker['last']
 
+            # Рассчитываем стоп-лосс и тейк-профит
             if side == 'buy':
                 stop_loss_price = entry_price * (1 - stop_loss_percent / 100)
                 take_profit_price = entry_price * (1 + take_profit_percent / 100)
@@ -71,6 +66,7 @@ class BingXTrader:
             logger.info(f"⛔ Отправка стоп-лосса (stop_market): {stop_loss_price:.2f} ({stop_loss_percent}%)")
             logger.info(f"🎯 Отправка тейк-профита (limit): {take_profit_price:.2f} ({take_profit_percent}%)")
 
+            # Отправляем стоп-лосс (stop_market)
             self.exchange.create_order(
                 symbol=self.symbol,
                 type='stop_market',
@@ -79,6 +75,7 @@ class BingXTrader:
                 params={'stopPrice': stop_loss_price, 'reduceOnly': True}
             )
 
+            # Отправляем тейк-профит (limit)
             self.exchange.create_order(
                 symbol=self.symbol,
                 type='limit',
@@ -88,6 +85,7 @@ class BingXTrader:
                 params={'reduceOnly': True}
             )
 
+            # Сохраняем позицию
             self.position = {
                 'side': side,
                 'entry_price': entry_price,
