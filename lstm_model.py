@@ -1,4 +1,3 @@
-# lstm_model.py
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
@@ -14,7 +13,7 @@ class LSTMPredictor:
         self.scaler = MinMaxScaler(feature_range=(0, 1))
         self.model = None
         self.is_trained = False
-        self.symbol = ""  # подставится извне
+        self.symbol = ""
 
     def prepare_features(self, df):
         df_features = df[['close', 'volume', 'rsi', 'sma20', 'atr']].copy().dropna()
@@ -32,11 +31,9 @@ class LSTMPredictor:
         if self.model is not None:
             return
         model = Sequential()
-        model.add(LSTM(64, return_sequences=True, input_shape=input_shape))
-        model.add(Dropout(0.3))
-        model.add(LSTM(32, return_sequences=False))
-        model.add(Dropout(0.3))
-        model.add(Dense(16, activation='relu'))
+        model.add(LSTM(32, return_sequences=True, input_shape=input_shape))
+        model.add(Dropout(0.2))
+        model.add(LSTM(16))
         model.add(Dense(1, activation='sigmoid'))
         model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
         self.model = model
@@ -53,7 +50,6 @@ class LSTMPredictor:
 
     def predict_next(self, df):
         if not self.is_trained:
-            logger.info(f"⏳ LSTM {self.symbol} не обучена – запускаем быстрое обучение (5 эпох)")
             self.train(df, epochs=5)
         data = self.prepare_features(df)
         last_sequence = data[-self.lookback:].reshape(1, self.lookback, -1)
