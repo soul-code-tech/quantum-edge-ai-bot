@@ -8,5 +8,3 @@ requests>=2.32.0
 scikit-learn==1.5.2
 tensorflow-cpu==2.16.1
 matplotlib==3.8.2
-aiofiles==23.2.1
-python-telegram-bot==20.7
