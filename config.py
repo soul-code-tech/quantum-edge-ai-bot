@@ -45,9 +45,12 @@ def get_available_symbols():
     """
     try:
         import ccxt
+        import logging
+        logger = logging.getLogger("config")
         exchange = ccxt.bingx({'options': {'defaultType': 'swap'}, 'enableRateLimit': True})
         exchange.load_markets()
         swaps = [s for s in exchange.markets.keys() if s.endswith('-USDT') and exchange.markets[s].get('type') == 'swap']
+        logger.info(f"🌐 Найдено {len(swaps)} доступных своп-пар: {swaps}")
         return swaps
     except Exception as e:
         print(f"⚠️ Ошибка при получении свопов: {e}")
