@@ -21,7 +21,6 @@ def model_path(symbol: str) -> str:
     return os.path.join(MODEL_DIR, symbol.replace("-", "") + ".pkl")
 
 def download_weights():
-    """Скачивает веса из ветки weights в /tmp/lstm_weights/"""
     logger.info("⬇️ Скачиваем веса из GitHub...")
     zip_path = "/tmp/weights.zip"
     try:
@@ -142,9 +141,6 @@ def initial_train_all(symbols, epochs=5):
     logger.info(f"🧠 Первичное обучение завершено: {ok}/{len(symbols)} обучено.")
 
 def sequential_trainer(symbols, interval=3600, epochs=2):
-    """
-    Дообучает каждую модель раз в `interval` секунд на `epochs` эпох
-    """
     idx = 0
     while True:
         sym = symbols[idx % len(symbols)]
