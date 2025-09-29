@@ -1,6 +1,24 @@
 # config.py
-SYMBOLS = [
-    'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT',
-    'XRP-USDT', 'DOGE-USDT', 'TON-USDT', 'AVAX-USDT',
-    'SHIB-USDT', 'LINK-USDT'
-]
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# ---------- биржа ----------
+USE_DEMO = os.getenv("USE_DEMO", "True").lower() == "true"
+LEVERAGE = int(os.getenv("LEVERAGE", "3"))
+
+# ---------- риск ----------
+RISK_PERCENT = 1.0
+STOP_LOSS_PCT = 1.5
+TAKE_PROFIT_PCT = 3.0
+LSTM_CONFIDENCE = 0.75
+
+# ---------- тайминги ----------
+TIMEFRAME = "1h"
+COOLDOWN_SECONDS = 3600
+UPDATE_TRAILING_INTERVAL = 300
+
+# ---------- Telegram ----------
+TG_TOKEN = os.getenv("TG_TOKEN")
+TG_CHAT = os.getenv("TG_CHAT")
