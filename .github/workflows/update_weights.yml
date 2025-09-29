@@ -1,0 +1,36 @@
+name: Обновить веса моделей
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # каждый день в 00:00 UTC
+  workflow_dispatch:  # можно запустить вручную
+
+jobs:
+  train-and-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Установить Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Установить зависимости
+        run: |
+          pip install ccxt pandas numpy scikit-learn tensorflow-cpu ta python-dotenv
+
+      - name: Обновить веса
+        run: |
+          python train_all_models.py
+
+      - name: Закоммитить и запушить веса
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git checkout -b weights || git checkout weights
+          git add weights/
+          git commit -m "авто: обновлены веса моделей" || exit 0
+          git push origin weights
