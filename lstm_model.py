@@ -86,3 +86,8 @@ class EnsemblePredictor:
             return 0.0
         X_new = np.array([[m.predict_next(df) for m in self.models]])
         return float(self.log_reg.predict_proba(X_new)[0, 1])
+
+    @property
+    def model(self):
+        # для совместимости с trainer
+        return self.models[0].model
