@@ -2,21 +2,20 @@
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.linear_model import LogisticRegression
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Input, LSTM, Dense, Dropout
+from tensorflow.keras.layers import LSTM, Dense, Dropout
 
 class LSTMPredictor:
-    def __init__(self, lookback=60, name="lstm"):
+    def __init__(self, lookback=60):
         self.lookback = lookback
-        self.name = name
         self.scaler = MinMaxScaler(feature_range=(0, 1))
         self.model = None
         self.is_trained = False
 
     def prepare_features(self, df):
         df_features = df[['close', 'volume', 'rsi', 'sma20', 'atr']].copy().dropna()
-        return self.scaler.fit_transform(df_features)
+        scaled = self.scaler.fit_transform(df_features)
+        return scaled
 
     def create_sequences(self, data):
         X, y = [], []
@@ -26,11 +25,11 @@ class LSTMPredictor:
         return np.array(X), np.array(y)
 
     def build_model(self, input_shape):
+        """Построить архитектуру, если ещё не построена."""
         if self.model is not None:
             return
         model = Sequential()
-        model.add(Input(shape=input_shape))
-        model.add(LSTM(64, return_sequences=True))
+        model.add(LSTM(64, return_sequences=True, input_shape=input_shape))
         model.add(Dropout(0.3))
         model.add(LSTM(32, return_sequences=False))
         model.add(Dropout(0.3))
@@ -43,51 +42,17 @@ class LSTMPredictor:
         data = self.prepare_features(df.tail(bars_back))
         X, y = self.create_sequences(data)
         X = X.reshape((X.shape[0], X.shape[1], 5))
+
         self.build_model((X.shape[1], X.shape[2]))
+        print(f"🧠 Обучаем LSTM-модель на {epochs} эпохах...")
         self.model.fit(X, y, epochs=epochs, batch_size=32, verbose=0)
         self.is_trained = True
+        print("✅ LSTM обучена!")
 
     def predict_next(self, df):
         if not self.is_trained:
-            return 0.0
+            self.train(df, epochs=5)
         data = self.prepare_features(df)
         last_sequence = data[-self.lookback:].reshape(1, self.lookback, -1)
-        return float(self.model.predict(last_sequence, verbose=0)[0][0])
-
-
-# =================== ENSEMBLE ===================
-class EnsemblePredictor:
-    def __init__(self, lookbacks=(60, 90)):
-        self.models = [LSTMPredictor(lb, name=f"lstm{lb}") for lb in lookbacks]
-        self.log_reg = LogisticRegression()
-
-    def train(self, df, epochs=5, bars_back=400):
-        # обучаем каждую LSTM и собираем историю вероятностей
-        X_stack = []
-        for m in self.models:
-            m.train(df, epochs=epochs, bars_back=bars_back)
-            # получаем вероятности для всех баров (а не только последней)
-            probs = []
-            data = m.prepare_features(df.tail(bars_back))
-            for i in range(m.lookback, len(data)):
-                seq = data[i - m.lookback:i].reshape(1, m.lookback, -1)
-                prob = float(m.model.predict(seq, verbose=0)[0][0])
-                probs.append(prob)
-            X_stack.append(probs)
-        X_stack = np.array(X_stack).T  # (N, n_models)
-
-        # целевая переменная
-        y = (df['close'].shift(-1) > df['close']).tail(bars_back).astype(int).values
-        self.log_reg.fit(X_stack, y)
-        self.is_trained = True
-
-    def predict_next(self, df):
-        if not getattr(self, 'is_trained', False):
-            return 0.0
-        X_new = np.array([[m.predict_next(df) for m in self.models]])
-        return float(self.log_reg.predict_proba(X_new)[0, 1])
-
-    @property
-    def model(self):
-        # для совместимости с trainer
-        return self.models[0].model
+        prob = float(self.model.predict(last_sequence, verbose=0)[0][0])
+        return prob
