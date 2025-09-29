@@ -42,7 +42,51 @@ GH_TOKEN  = os.getenv("GH_TOKEN")
 REPO      = "soul-code-tech/quantum-edge-ai-bot"
 GIT_EMAIL = "bot@quantum-edge-ai-bot.render.com"
 GIT_NAME  = "QuantumEdgeBot"
+# ---------- торговый цикл ----------
+def run_strategy():
+    logger.info("=== Торговый цикл запущен ===")
+    while True:
+        try:
+            for symbol in SYMBOLS:
+                if not getattr(lstm_models[symbol], 'is_trained', False):
+                    continue
 
+                df = get_bars(symbol, TIMEFRAME, 500)
+                if df is None or len(df) < 100:
+                    continue
+
+                df = calculate_strategy_signals(df, symbol, 60)
+
+                if not is_fresh_signal(symbol, df):
+                    continue
+
+                current_price = df['close'].iloc[-1]
+                buy_signal = df['buy_signal'].iloc[-1]
+                sell_signal = df['sell_signal'].iloc[-1]
+                long_score = df['long_score'].iloc[-1]
+                short_score = df['short_score'].iloc[-1]
+
+                model = lstm_models[symbol]
+                lstm_prob = model.predict_next(df)
+                lstm_confident = lstm_prob > LSTM_CONFIDENCE
+
+                strong_strategy = (buy_signal and long_score >= 5) or (sell_signal and short_score >= 5)
+                if strong_strategy and lstm_confident:
+                    side = 'buy' if buy_signal else 'sell'
+                    atr = df['atr'].iloc[-1]
+                    amount = max(0.001, (100 * RISK_PERCENT / 100) / (atr * 1.5))
+                    logger.info(f"🎯 [SIGNAL] {side.upper()} {symbol} | P={lstm_prob:.2%} | ATR={atr:.2f} | Amt={amount:.4f}")
+                    traders[symbol].place_order(
+                        side=side,
+                        amount=amount,
+                        stop_loss_percent=STOP_LOSS_PCT,
+                        take_profit_percent=TAKE_PROFIT_PCT
+                    )
+
+            time.sleep(60)
+        except Exception as e:
+            logger.error(f"Ошибка в стратегии: {e}")
+            time.sleep(60)
 def push_weights_to_github():
     try:
         logger.info("[GIT] Начинаем последовательное обучение + push в weights")
