@@ -29,3 +29,17 @@ REAL_SWAP_TICKERS = [
     'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT', 'XRP-USDT',
     'ADA-USDT', 'DOGE-USDT', 'MATIC-USDT', 'LTC-USDT', 'LINK-USDT'
 ]
+
+# ---------- минимальные лоты ----------
+MIN_LOTS = {
+    'BTC-USDT': 0.001,
+    'ETH-USDT': 0.001,
+    'BNB-USDT': 0.01,
+    'SOL-USDT': 0.01,
+    'XRP-USDT': 1,
+    'ADA-USDT': 1,
+    'DOGE-USDT': 1,
+    'DOT-USDT': 0.1,
+    'MATIC-USDT': 1,
+    'LTC-USDT': 0.01
+}
