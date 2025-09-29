@@ -23,6 +23,21 @@ UPDATE_TRAILING_INTERVAL = 300
 TG_TOKEN = os.getenv("TG_TOKEN")
 TG_CHAT = os.getenv("TG_CHAT")
 
+# ---------- trader ----------
+SLIP_BUFFER = 0.001  # 0.1%
+MIN_LOTS = {
+    'BTC-USDT': 0.001,
+    'ETH-USDT': 0.001,
+    'BNB-USDT': 0.01,
+    'SOL-USDT': 0.01,
+    'XRP-USDT': 1,
+    'ADA-USDT': 1,
+    'DOGE-USDT': 1,
+    'DOT-USDT': 0.1,
+    'MATIC-USDT': 1,
+    'LTC-USDT': 0.01
+}
+
 # ✅ ИСПРАВЛЕНО: используйте только те пары, которые есть на BingX
 # Запустите check_bingx_swaps.py для проверки
 SYMBOLS = [
