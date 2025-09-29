@@ -38,10 +38,19 @@ MIN_LOTS = {
     'LTC-USDT': 0.01
 }
 
-# ✅ ИСПРАВЛЕНО: используйте только те пары, которые есть на BingX
-# Запустите check_bingx_swaps.py для проверки
-SYMBOLS = [
-    'BTC-USDT',  # проверьте, есть ли на BingX
-    'ETH-USDT',  # проверьте, есть ли на BingX
-    # добавьте другие, если есть
-]
+# ---------- динамические символы ----------
+def get_available_symbols():
+    """
+    Автоматически получает доступные своп-пары с BingX.
+    """
+    try:
+        import ccxt
+        exchange = ccxt.bingx({'options': {'defaultType': 'swap'}, 'enableRateLimit': True})
+        exchange.load_markets()
+        swaps = [s for s in exchange.markets.keys() if s.endswith('-USDT') and exchange.markets[s].get('type') == 'swap']
+        return swaps
+    except Exception as e:
+        print(f"⚠️ Ошибка при получении свопов: {e}")
+        return ['BTC-USDT']  # fallback
+
+SYMBOLS = get_available_symbols()
