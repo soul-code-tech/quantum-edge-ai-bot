@@ -38,7 +38,7 @@ MIN_LOTS = {
     'LTC-USDT': 0.01
 }
 
-# ---------- торговые пары ----------
+# ---------- торговые пары (только те, что есть на BingX) ----------
 SYMBOLS = [
     'BTC-USDT',
     'ETH-USDT',
@@ -47,7 +47,5 @@ SYMBOLS = [
     'XRP-USDT',
     'DOGE-USDT',
     'ADA-USDT',
-    'AVAX-USDT',
-    'TON-USDT',
-    'LINK-USDT'
+    'AVAX-USDT'
 ]
