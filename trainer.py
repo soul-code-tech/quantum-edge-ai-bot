@@ -54,7 +54,11 @@ def market_exists(symbol: str) -> bool:
     try:
         exchange = ccxt.bingx({'options': {'defaultType': 'swap'}, 'enableRateLimit': True})
         exchange.load_markets()
-        return symbol in exchange.markets
+        # ✅ Проверяем тип рынка
+        if symbol in exchange.markets:
+            market = exchange.markets[symbol]
+            return market.get('type') == 'swap' and market.get('active')
+        return False
     except Exception as e:
         logger.warning(f"market_exists({symbol}) error: {e}")
         return False
