@@ -69,7 +69,9 @@ def run_strategy():
                 if df is None or len(df) < 100:
                     continue
 
-                df = calculate_strategy_signals(df, 60)
+                # ✅ ИСПРАВЛЕНО: передаём symbol как второй аргумент
+                df = calculate_strategy_signals(df, symbol, 60)
+
                 if not is_fresh_signal(symbol, df):
                     continue
 
@@ -103,7 +105,7 @@ def run_strategy():
 def start_all():
     logger.info("=== СТАРТ start_all() ===")
     
-    # 1. Скачиваем веса из GitHub (ветка weights → /tmp/lstm_weights/)
+    # 1. Скачиваем веса из GitHub
     download_weights()
 
     # 2. Загружаем существующие модели
@@ -124,7 +126,7 @@ def start_all():
             if train_one(s, epochs=5):
                 lstm_models[s].is_trained = True
                 logger.info(f"✅ {s} обучена — включена в торговлю")
-            time.sleep(5)  # пауза между парами
+            time.sleep(5)
     else:
         missing = [s for s in SYMBOLS if not lstm_models[s].is_trained]
         for s in missing:
@@ -146,7 +148,7 @@ def start_all():
                 if lstm_models[s].is_trained:
                     train_one(s, epochs=2)
                 time.sleep(10)
-            time.sleep(3600)  # 1 час
+            time.sleep(3600)
 
     threading.Thread(target=hourly_retrain, daemon=True).start()
     logger.info("🚀 Quantum Edge AI Bot полностью запущен!")
@@ -160,14 +162,15 @@ def wake_up():
 def health_check():
     return "OK", 200
 
-if __name__ == "__main__":
-    threading.Thread(target=start_all, daemon=True).start()
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
-    # Подключаем PnL-мониторинг
+# Подключаем PnL-мониторинг (если файл существует)
 try:
     from pnl_monitor import PNL_BP, start_pnl_monitor
     app.register_blueprint(PNL_BP)
     start_pnl_monitor()
 except Exception as e:
     logger.warning(f"Не удалось запустить PnL-мониторинг: {e}")
+
+if __name__ == "__main__":
+    threading.Thread(target=start_all, daemon=True).start()
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
