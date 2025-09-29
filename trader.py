@@ -27,7 +27,7 @@ class BingXTrader:
 
     def _set_leverage(self, leverage: int, side: str):
         try:
-            # ленивая загрузка + свежий таймстамп
+            # ← ЛЕНИВАЯ загрузка рынков
             self.exchange.load_markets()
             self.exchange.set_leverage(leverage, symbol=self.symbol, params={'side': side})
             logger.info(f"✅ {self.symbol}: плечо установлено на {leverage}x {side}")
@@ -36,6 +36,7 @@ class BingXTrader:
 
     def place_order(self, side, amount, stop_loss_percent=1.5, take_profit_percent=3.0):
         try:
+            # ← ЛЕНИВАЯ загрузка рынков ТОЛЬКО здесь
             self.exchange.load_markets()
             if self.symbol not in self.exchange.markets:
                 logger.warning(f"{self.symbol} отсутствует на BingX – пропускаем")
