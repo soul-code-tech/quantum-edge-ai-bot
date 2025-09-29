@@ -38,29 +38,11 @@ MIN_LOTS = {
     'LTC-USDT': 0.01
 }
 
-# ---------- динамические символы ----------
-def get_available_symbols():
-    """
-    Автоматически получает доступные своп-пары с BingX.
-    Если не получается (например, на Render), возвращает fallback.
-    """
-    try:
-        import ccxt
-        import logging
-        logger = logging.getLogger("config")
-        exchange = ccxt.bingx({'options': {'defaultType': 'swap'}, 'enableRateLimit': True})
-        exchange.load_markets()
-        swaps = [s for s in exchange.markets.keys() if s.endswith('-USDT') and exchange.markets[s].get('type') == 'swap']
-        if swaps:
-            logger.info(f"🌐 Найдено {len(swaps)} доступных своп-пар: {swaps}")
-            return swaps
-        else:
-            logger.warning("⚠️ Не найдено доступных своп-пар — используем fallback")
-            return ['BTC-USDT', 'ETH-USDT']  # fallback
-    except Exception as e:
-        import logging
-        logger = logging.getLogger("config")
-        logger.warning(f"⚠️ Ошибка при получении свопов: {e} — используем fallback")
-        return ['BTC-USDT', 'ETH-USDT']  # fallback
-
-SYMBOLS = get_available_symbols()
+# ---------- торговые пары ----------
+SYMBOLS = [
+    'BTC-USDT',
+    'ETH-USDT',
+    'SOL-USDT',
+    'BNB-USDT',
+    # добавьте другие, если нужно
+]
