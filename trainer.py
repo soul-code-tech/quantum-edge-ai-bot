@@ -3,6 +3,9 @@ import os
 import time
 import pickle
 import logging
+import requests
+import zipfile
+import shutil
 from data_fetcher import get_bars
 from strategy import calculate_strategy_signals
 from lstm_model import LSTMPredictor
@@ -14,8 +17,41 @@ logger = logging.getLogger("trainer")
 MODEL_DIR = "/tmp/lstm_weights"
 os.makedirs(MODEL_DIR, exist_ok=True)
 
+REPO = "https://github.com/soul-code-tech/quantum-edge-ai-bot"
+BRANCH = "weights"
+ZIP_URL = f"{REPO}/archive/refs/heads/{BRANCH}.zip"
+
 def model_path(symbol: str) -> str:
     return os.path.join(MODEL_DIR, symbol.replace("-", "") + ".pkl")
+
+def download_weights():
+    """Скачивает веса из ветки weights в /tmp/lstm_weights/"""
+    logger.info("⬇️ Скачиваем веса из GitHub...")
+    zip_path = "/tmp/weights.zip"
+    try:
+        r = requests.get(ZIP_URL, stream=True, timeout=30)
+        if r.status_code != 200:
+            logger.warning(f"GitHub вернул {r.status_code} — пропускаем загрузку")
+            return
+        with open(zip_path, "wb") as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+        if not zipfile.is_zipfile(zip_path):
+            logger.warning("Скачанный файл не ZIP")
+            os.remove(zip_path)
+            return
+        with zipfile.ZipFile(zip_path, 'r') as z:
+            z.extractall("/tmp")
+        src = f"/tmp/quantum-edge-ai-bot-{BRANCH}/weights"
+        if os.path.exists(src):
+            shutil.rmtree(MODEL_DIR, ignore_errors=True)
+            shutil.move(src, MODEL_DIR)
+            logger.info("✅ Веса загружены из GitHub")
+        else:
+            logger.warning("Папка weights не найдена в архиве")
+        os.remove(zip_path)
+    except Exception as e:
+        logger.error(f"Ошибка загрузки весов: {e}")
 
 def market_exists(symbol: str) -> bool:
     try:
@@ -39,7 +75,7 @@ def validate_model(model, df, bars_back=400):
         model.build_model((X.shape[1], X.shape[2]))
         model.model.fit(X_train, y_train, epochs=1, verbose=0)
         _, acc = model.model.evaluate(X_test, y_test, verbose=0)
-        logger.info(f"✅ Валидация {model.symbol if hasattr(model, 'symbol') else 'model'}: acc={acc:.3f}")
+        logger.info(f"✅ Валидация {model_path('dummy').split('/')[-1]}: acc={acc:.3f}")
         return acc >= 0.52
     except Exception as e:
         logger.error(f"Валидация провалена: {e}")
@@ -61,17 +97,16 @@ def train_one(symbol: str, lookback: int = 60, epochs: int = 5) -> bool:
         model = LSTMPredictor(lookback=lookback)
         model.train(df, epochs=epochs)
 
-        # Валидация
         if not validate_model(model, df):
-            logger.warning(f"⚠️ Модель {symbol} не прошла валидацию – отклонена.")
+            logger.warning(f"⚠️ Модель {symbol} не прошла валидацию")
             return False
 
-        # Сохраняем локально
+        # Сохраняем ТОЛЬКО локально (в /tmp)
         weight_file = model_path(symbol).replace(".pkl", ".weights.h5")
         model.model.save_weights(weight_file)
         with open(model_path(symbol), "wb") as fh:
             pickle.dump({"scaler": model.scaler}, fh)
-        logger.info(f"✅ Модель {symbol} обучена и валидирована.")
+        logger.info(f"✅ Модель {symbol} сохранена локально")
         return True
 
     except Exception as e:
@@ -93,20 +128,3 @@ def load_model(symbol: str, lookback: int = 60):
     except Exception as e:
         logger.error(f"⚠️ Ошибка загрузки модели {symbol}: {e}")
         return None
-
-def initial_train_all(symbols, epochs=5):
-    logger.info("🧠 Первичное обучение всех пар...")
-    ok = 0
-    for s in symbols:
-        if train_one(s, epochs=epochs):
-            ok += 1
-        time.sleep(2)
-    logger.info(f"🧠 Обучено: {ok}/{len(symbols)} пар.")
-
-def sequential_trainer(symbols, interval=900, epochs=3):
-    idx = 0
-    while True:
-        sym = symbols[idx % len(symbols)]
-        train_one(sym, epochs=epochs)
-        idx += 1
-        time.sleep(interval)
