@@ -10,7 +10,7 @@ from data_fetcher import get_bars
 from strategy import calculate_strategy_signals
 from trader import BingXTrader
 from lstm_model import EnsemblePredictor
-from trainer import train_one, load_model, download_weights, market_exists
+from trainer import train_one, load_model, download_weights, sequential_trainer
 from position_monitor import start_position_monitor
 from signal_cache import is_fresh_signal
 from pnl_monitor import PNL_BP, start_pnl_monitor
@@ -132,6 +132,9 @@ def start_all():
     start_position_monitor(traders, SYMBOLS)
     threading.Thread(target=keep_alive, daemon=True).start()
     start_pnl_monitor()
+
+    # Запуск дообучения (каждый час, 2 эпохи)
+    threading.Thread(target=sequential_trainer, args=(SYMBOLS, 3600, 2), daemon=True).start()
 
     logger.info("🚀 Quantum Edge AI Bot полностью запущен!")
 
