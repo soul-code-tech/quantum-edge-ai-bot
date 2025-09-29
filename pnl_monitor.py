@@ -101,16 +101,16 @@ HTML_PAGE = """
         const ctx = document.getElementById('chart').getContext('2d');
         new Chart(ctx, {
             type: 'line',
-            data: {
+             {
                 labels: data.equity.map((_, i) => i),
                 datasets: [{
                     label: 'Equity (USDT)',
-                    data: data.equity,
+                     data.equity,
                     borderColor: 'green',
                     fill: false
                 }, {
                     label: 'Drawdown (%)',
-                    data: data.drawdown,
+                     data.drawdown,
                     borderColor: 'red',
                     fill: false
                 }]
