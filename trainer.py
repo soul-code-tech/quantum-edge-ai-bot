@@ -17,6 +17,7 @@ logger = logging.getLogger("trainer")
 MODEL_DIR = "/tmp/lstm_weights"
 os.makedirs(MODEL_DIR, exist_ok=True)
 
+# ✅ ИСПРАВЛЕНО: убран пробел в конце URL
 REPO = "https://github.com/soul-code-tech/quantum-edge-ai-bot"
 BRANCH = "weights"
 ZIP_URL = f"{REPO}/archive/refs/heads/{BRANCH}.zip"
@@ -92,7 +93,9 @@ def train_one(symbol: str, lookback: int = 60, epochs: int = 5) -> bool:
         if df is None or len(df) < 300:
             logger.warning(f"⚠️ Недостаточно данных для {symbol}")
             return False
-        df = calculate_strategy_signals(df, 60)
+
+        # ✅ ИСПРАВЛЕНО: передаём symbol как второй аргумент
+        df = calculate_strategy_signals(df, symbol, 60)
 
         model = LSTMPredictor(lookback=lookback)
         model.train(df, epochs=epochs)
