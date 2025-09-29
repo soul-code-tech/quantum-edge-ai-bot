@@ -9,7 +9,7 @@ import shutil
 from sklearn.model_selection import train_test_split
 from data_fetcher import get_bars
 from strategy import calculate_strategy_signals
-from lstm_model import EnsemblePredictor
+from lstm_model import LSTMPredictor
 import ccxt
 
 logger = logging.getLogger("trainer")
@@ -86,24 +86,24 @@ def train_one(symbol: str, lookback: int = 60, epochs: int = 5) -> bool:
             logger.info(f"❌ {symbol}: рынок не существует на BingX – пропускаем.")
             return False
 
-        logger.info(f"🧠 Ensemble-обучение {symbol} ({epochs} эпох)")
+        logger.info(f"🧠 LSTM-обучение {symbol} ({epochs} эпох)")
         df = get_bars(symbol, "1h", 500)
         if df is None or len(df) < 300:
             logger.warning(f"⚠️ Недостаточно данных для {symbol}")
             return False
 
         df = calculate_strategy_signals(df, symbol, 60)
-        ensemble = EnsemblePredictor(lookbacks=(60, 90))
-        ensemble.train(df, epochs=epochs, bars_back=400)
+        model = LSTMPredictor(lookback=lookback)
+        model.train(df, epochs=epochs, bars_back=400)
 
-        if not validate_model(ensemble, df):
+        if not validate_model(model, df):
             logger.warning(f"⚠️ Модель {symbol} не прошла валидацию")
             return False
 
         weight_file = model_path(symbol).replace(".pkl", ".weights.h5")
-        ensemble.model.save_weights(weight_file)
+        model.model.save_weights(weight_file)
         with open(model_path(symbol), "wb") as fh:
-            pickle.dump({"ensemble": ensemble}, fh)
+            pickle.dump({"scaler": model.scaler}, fh)
         logger.info(f"✅ Модель {symbol} сохранена локально")
         return True
 
@@ -119,8 +119,12 @@ def load_model(symbol: str, lookback: int = 60):
     try:
         with open(path, "rb") as fh:
             bundle = pickle.load(fh)
+        m = LSTMPredictor(lookback=lookback)
+        m.build_model((lookback, 5))
+        m.model.load_weights(path.replace(".pkl", ".weights.h5"))
+        m.is_trained = True
         logger.info(f"✅ Модель {symbol} загружена из файла")
-        return bundle["ensemble"]
+        return m
     except Exception as e:
         logger.error(f"⚠️ Ошибка загрузки модели {symbol}: {e}")
         return None
