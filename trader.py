@@ -19,6 +19,7 @@ class BingXTrader:
             'options': {'defaultType': 'swap'},
             'enableRateLimit': True,
         })
+        self.exchange.load_markets()  # ← добавлено
         if use_demo:
             self.exchange.set_sandbox_mode(True)
         self._set_leverage(leverage)
@@ -28,7 +29,6 @@ class BingXTrader:
 
     def _set_leverage(self, leverage: int, side: str = "LONG"):
         try:
-            # ✅ Новый способ установки плеча через ccxt
             self.exchange.set_leverage(leverage, symbol=self.symbol, params={'side': side})
             logger.info(f"✅ {self.symbol}: Плечо установлено на {leverage}x {side}")
         except Exception as e:
@@ -46,13 +46,11 @@ class BingXTrader:
             order_id = market_order.get('id', 'N/A')
             logger.info(f"✅ Рыночный ордер исполнен: {order_id}")
 
-            # Получаем цену входа
             entry_price = market_order.get('price', None)
             if not entry_price:
                 ticker = self.exchange.fetch_ticker(self.symbol)
                 entry_price = ticker['last']
 
-            # Рассчитываем стоп-лосс и тейк-профит
             if side == 'buy':
                 stop_loss_price = entry_price * (1 - stop_loss_percent / 100)
                 take_profit_price = entry_price * (1 + take_profit_percent / 100)
@@ -66,7 +64,6 @@ class BingXTrader:
             logger.info(f"⛔ Отправка стоп-лосса (stop_market): {stop_loss_price:.2f} ({stop_loss_percent}%)")
             logger.info(f"🎯 Отправка тейк-профита (limit): {take_profit_price:.2f} ({take_profit_percent}%)")
 
-            # Отправляем стоп-лосс (stop_market)
             self.exchange.create_order(
                 symbol=self.symbol,
                 type='stop_market',
@@ -75,7 +72,6 @@ class BingXTrader:
                 params={'stopPrice': stop_loss_price, 'reduceOnly': True}
             )
 
-            # Отправляем тейк-профит (limit)
             self.exchange.create_order(
                 symbol=self.symbol,
                 type='limit',
@@ -85,7 +81,6 @@ class BingXTrader:
                 params={'reduceOnly': True}
             )
 
-            # Сохраняем позицию
             self.position = {
                 'side': side,
                 'entry_price': entry_price,
@@ -97,21 +92,7 @@ class BingXTrader:
             return market_order
 
         except Exception as e:
-            error_str = str(e)
-            if "position not exist" in error_str:
-                logger.error(f"❌ {self.symbol}: Позиция не найдена — возможно, ордер не исполнился.")
-            elif "Invalid order quantity" in error_str:
-                logger.error(f"❌ {self.symbol}: Неверный размер ордера. Проверь лимиты.")
-            elif "101415" in error_str:
-                logger.warning(f"🚫 {self.symbol}: Торговля временно заблокирована. Ждём...")
-            elif "101212" in error_str:
-                logger.warning(f"⚠️ {self.symbol}: Есть отложенные ордера — отмени их вручную.")
-            elif "Invalid order type" in error_str:
-                logger.error(f"❌ {self.symbol}: Неверный тип ордера. Используй 'stop_market' и 'limit'.")
-            elif "reduceOnly" in error_str:
-                logger.warning(f"⚠️ {self.symbol}: reduceOnly требует существующей позиции — проверь, что ордер исполнен.")
-            else:
-                logger.error(f"❌ Полная ошибка API {self.symbol}: {type(e).__name__}: {error_str}")
+            logger.error(f"Ошибка ордера {self.symbol}: {type(e).__name__}: {e}")
             return None
 
     def update_trailing_stop(self):
