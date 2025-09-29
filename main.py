@@ -9,21 +9,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("main")
 logger.info("=== MAIN.PY СТАРТУЕТ ===")
-import os, socket, threading, time
-def _instant_port():
-    port = int(os.environ.get("PORT", 10000))
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        s.bind(("0.0.0.0", port))
-        s.listen(5)
-        while True:
-            conn, _ = s.accept()
-            try:
-                conn.sendall(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\nOK")
-            finally:
-                conn.close()
-threading.Thread(target=_instant_port, daemon=True).start()
-time.sleep(0.3)
 
 # 2. ОСТАЛЬНЫЕ ИМПОРТЫ
 import sys, logging
