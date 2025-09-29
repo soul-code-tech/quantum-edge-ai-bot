@@ -17,7 +17,7 @@ logger = logging.getLogger("trainer")
 os.environ["WEIGHTS_DIR"] = "weights"
 
 from config import SYMBOLS
-from trainer import train_one
+MODEL_DIR = os.getenv("WEIGHTS_DIR", "/tmp/lstm_weights")
 
 os.makedirs("weights", exist_ok=True)
 
