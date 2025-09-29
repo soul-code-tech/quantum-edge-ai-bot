@@ -62,15 +62,20 @@ class EnsemblePredictor:
         self.log_reg = LogisticRegression()
 
     def train(self, df, epochs=5, bars_back=400):
-        # обучаем каждую LSTM
-        X_stack = None
+        # обучаем каждую LSTM и собираем историю вероятностей
+        X_stack = []
         for m in self.models:
             m.train(df, epochs=epochs, bars_back=bars_back)
-            prob = m.predict_next(df)
-            col = np.full((len(df.tail(bars_back)), 1), prob)
-            X_stack = col if X_stack is None else np.hstack([X_stack, col])
+            probs = []
+            data = m.prepare_features(df.tail(bars_back))
+            for i in range(m.lookback, len(data)):
+                seq = data[i - m.lookback:i].reshape(1, m.lookback, -1)
+                prob = float(m.model.predict(seq, verbose=0)[0][0])
+                probs.append(prob)
+            X_stack.append(probs)
+        X_stack = np.array(X_stack).T  # (N, n_models)
 
-        # логистическая регрессия на вероятностях моделей
+        # целевая переменная
         y = (df['close'].shift(-1) > df['close']).tail(bars_back).astype(int).values
         self.log_reg.fit(X_stack, y)
         self.is_trained = True
