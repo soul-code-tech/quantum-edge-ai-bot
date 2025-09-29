@@ -10,7 +10,6 @@ from strategy import calculate_strategy_signals
 from trader import BingXTrader
 from lstm_model import LSTMPredictor
 from trainer import train_one, load_model, download_weights, sequential_trainer
-from position_monitor import start_position_monitor
 from signal_cache import is_fresh_signal
 from config import USE_DEMO, LEVERAGE, RISK_PERCENT, STOP_LOSS_PCT, TAKE_PROFIT_PCT, LSTM_CONFIDENCE, TIMEFRAME, SYMBOLS
 
@@ -42,6 +41,56 @@ GH_TOKEN  = os.getenv("GH_TOKEN")
 REPO      = "soul-code-tech/quantum-edge-ai-bot"
 GIT_EMAIL = "bot@quantum-edge-ai-bot.render.com"
 GIT_NAME  = "QuantumEdgeBot"
+
+def push_weights_to_github():
+    try:
+        logger.info("[GIT] Начинаем последовательное обучение + push в weights")
+        work_dir = tempfile.mkdtemp()
+        os.chdir(work_dir)
+
+        clone_url = f"https://{GH_TOKEN}@github.com/{REPO}.git"
+        subprocess.run(["git", "clone", "--branch", "weights", clone_url, "."], check=True,
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        subprocess.run(["git", "config", "user.email", GIT_EMAIL], check=True)
+        subprocess.run(["git", "config", "user.name", GIT_NAME], check=True)
+
+        for f in os.listdir("."):
+            if f.endswith((".pkl", ".weights.h5")):
+                os.remove(f)
+
+        weights_src = os.environ.get("WEIGHTS_DIR", "/tmp/lstm_weights")
+        os.makedirs(weights_src, exist_ok=True)
+
+        trained = 0
+        for symbol in SYMBOLS:
+            logger.info(f"[TRAIN] {symbol}: начинаем обучение (5 эпох)")
+            if train_one(symbol, epochs=5):
+                trained += 1
+                logger.info(f"[TRAIN] {symbol}: обучена")
+            else:
+                logger.warning(f"[TRAIN] {symbol}: не обучена — пропускаем")
+            time.sleep(1)
+
+        if trained == 0:
+            logger.warning("[GIT] Ни одна модель не обучена — нечего пушить")
+            return
+
+        for f in os.listdir(weights_src):
+            if f.endswith((".pkl", ".weights.h5")):
+                shutil.copy(os.path.join(weights_src, f), f)
+
+        subprocess.run(["git", "add", "."], check=True)
+        msg = f"авто: обновлены веса моделей {datetime.utcnow().strftime('%Y-%m-%d_%H:%M:%S')}"
+        subprocess.run(["git", "commit", "-m", msg], check=True)
+        subprocess.run(["git", "push", "origin", "weights"], check=True)
+
+        logger.info("[GIT] ✅ Веса успешно отправлены в ветку weights")
+    except Exception as e:
+        logger.error(f"[GIT] ❌ Ошибка push: {e}")
+    finally:
+        os.chdir("/opt/render/project/src")
+        shutil.rmtree(work_dir, ignore_errors=True)
+
 # ---------- торговый цикл ----------
 def run_strategy():
     logger.info("=== Торговый цикл запущен ===")
@@ -87,55 +136,6 @@ def run_strategy():
         except Exception as e:
             logger.error(f"Ошибка в стратегии: {e}")
             time.sleep(60)
-def push_weights_to_github():
-    try:
-        logger.info("[GIT] Начинаем последовательное обучение + push в weights")
-        work_dir = tempfile.mkdtemp()
-        os.chdir(work_dir)
-
-        clone_url = f"https://{GH_TOKEN}@github.com/{REPO}.git"
-        subprocess.run(["git", "clone", "--branch", "weights", clone_url, "."], check=True,
-                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        subprocess.run(["git", "config", "user.email", GIT_EMAIL], check=True)
-        subprocess.run(["git", "config", "user.name", GIT_NAME], check=True)
-
-        # очищаем старые веса
-        for f in os.listdir("."):
-            if f.endswith((".pkl", ".weights.h5")):
-                os.remove(f)
-
-        weights_src = os.environ.get("WEIGHTS_DIR", "/tmp/lstm_weights")
-        os.makedirs(weights_src, exist_ok=True)
-
-        trained = 0
-        for symbol in SYMBOLS:
-            logger.info(f"[TRAIN] {symbol}: начинаем обучение (5 эпох)")
-            if train_one(symbol, epochs=5):
-                trained += 1
-                logger.info(f"[TRAIN] {symbol}: обучена")
-            else:
-                logger.warning(f"[TRAIN] {symbol}: не обучена — пропускаем")
-            time.sleep(1)  # не ддосим CPU
-
-        if trained == 0:
-            logger.warning("[GIT] Ни одна модель не обучена — нечего пушить")
-            return
-
-        for f in os.listdir(weights_src):
-            if f.endswith((".pkl", ".weights.h5")):
-                shutil.copy(os.path.join(weights_src, f), f)
-
-        subprocess.run(["git", "add", "."], check=True)
-        msg = f"авто: обновлены веса моделей {datetime.utcnow().strftime('%Y-%m-%d_%H:%M:%S')}"
-        subprocess.run(["git", "commit", "-m", msg], check=True)
-        subprocess.run(["git", "push", "origin", "weights"], check=True)
-
-        logger.info("[GIT] ✅ Веса успешно отправлены в ветку weights")
-    except Exception as e:
-        logger.error(f"[GIT] ❌ Ошибка push: {e}")
-    finally:
-        os.chdir("/opt/render/project/src")
-        shutil.rmtree(work_dir, ignore_errors=True)
 
 # ---------- модифицированный start_all() ----------
 def start_all():
@@ -168,29 +168,8 @@ def start_all():
 
     threading.Thread(target=run_strategy, daemon=True).start()
     threading.Thread(target=sequential_trainer, args=(SYMBOLS, 3600, 2), daemon=True).start()
-    start_position_monitor(traders, SYMBOLS)
-# ---------- одноразовая проверка символов (удалите после использования) ----------
-def check_and_fix_symbols():
-    logger.info("=== Проверяем реальные символы BingX ===")
-    try:
-        exchange = ccxt.bingx({'options': {'defaultType': 'swap'}, 'enableRateLimit': True})
-        exchange.load_markets()
-        real = [s for s in exchange.markets.keys() if s.endswith('-USDT') and exchange.markets[s].get('active')]
-        real_sorted = sorted(real)
-        logger.info("Реальные символы BingX:")
-        for s in real_sorted:
-            logger.info(f"  {s}")
-        # оставляем только пересечение с нашим списком
-        global SYMBOLS
-        SYMBOLS = [s for s in SYMBOLS if s in real]
-        logger.info(f"Оставлено после фильтрации: {SYMBOLS}")
-    except Exception as e:
-        logger.error(f"Ошибка проверки символов: {e}")
 
-# ---------- запускаем проверку при старте (один раз) ----------
-check_and_fix_symbols()
 if __name__ == "__main__":
     threading.Thread(target=start_all, daemon=True).start()
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-    
