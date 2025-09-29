@@ -22,6 +22,7 @@ def _log(stage: str, symbol: str, msg: str):
 def model_path(symbol: str) -> str:
     return os.path.join(MODEL_DIR, symbol.replace("-", "") + ".pkl")
 
+# ---------- EXPORTED FUNCTIONS ----------
 def download_weights():
     _log("WEIGHTS", "ALL", "⬇️ Начинаем скачивание весов с GitHub")
     zip_path = "/tmp/weights.zip"
@@ -51,4 +52,63 @@ def download_weights():
     except Exception as e:
         _log("WEIGHTS", "ALL", f"❌ Ошибка загрузки весов: {e}")
 
-# ...остальные функции без изменений...
+def train_one(symbol: str, lookback: int = 60, epochs: int = 5) -> bool:
+    try:
+        from config import SYMBOLS          # локальный импорт, чтобы избежать цикла
+        if symbol not in SYMBOLS:
+            return False
+        # (остальной код без изменений)
+        _log("TRAIN", symbol, f"Начинаем обучение ({epochs} эпох)")
+        df = get_bars(symbol, "1h", 500)
+        if df is None or len(df) < 300:
+            _log("TRAIN", symbol, "Недостаточно данных – пропускаем")
+            return False
+        df = calculate_strategy_signals(df, symbol, 60)
+        model = LSTMPredictor(lookback=lookback)
+        model.symbol = symbol
+        model.train(df, epochs=epochs, bars_back=400)
+        if not validate_model(model, df):
+            _log("TRAIN", symbol, "Модель не прошла валидацию – пропускаем")
+            return False
+        weight_file = model_path(symbol).replace(".pkl", ".weights.h5")
+        model.model.save_weights(weight_file)
+        with open(model_path(symbol), "wb") as fh:
+            pickle.dump({"scaler": model.scaler}, fh)
+        _log("TRAIN", symbol, "Модель прошла валидацию, сохраняем веса")
+        return True
+    except Exception as e:
+        _log("TRAIN", symbol, f"❌ Ошибка обучения: {e}")
+        return False
+
+def load_model(symbol: str, lookback: int = 60):
+    path = model_path(symbol)
+    if not os.path.exists(path):
+        _log("LOAD", symbol, "Файл модели не найден")
+        return None
+    try:
+        with open(path, "rb") as fh:
+            bundle = pickle.load(fh)
+        m = LSTMPredictor(lookback=lookback)
+        m.symbol = symbol
+        m.build_model((lookback, 5))
+        m.model.load_weights(path.replace(".pkl", ".weights.h5"))
+        m.is_trained = True
+        _log("LOAD", symbol, "pickle-файл прочитан, веса загружены в модель")
+        return m
+    except Exception as e:
+        _log("LOAD", symbol, f"❌ Ошибка загрузки модели: {e}")
+        return None
+
+def sequential_trainer(symbols, interval=3600, epochs=2):
+    idx = 0
+    while True:
+        sym = symbols[idx % len(symbols)]
+        _log("RETRAIN", sym, "Начинаем дообучение (2 эпохи)")
+        if load_model(sym):
+            _log("RETRAIN", sym, "Модель загружена – дообучаем")
+            train_one(sym, epochs=epochs)
+        else:
+            _log("RETRAIN", sym, "Модель не найдена – обучаем с нуля")
+            train_one(sym, epochs=epochs)
+        idx += 1
+        time.sleep(interval)
