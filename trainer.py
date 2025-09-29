@@ -7,11 +7,10 @@ import requests
 import zipfile
 import shutil
 from sklearn.model_selection import train_test_split
-from data_fetcher import get_bars, get_funding_rate
+from data_fetcher import get_bars
 from strategy import calculate_strategy_signals
 from lstm_model import EnsemblePredictor
 import ccxt
-from config import REAL_SWAP_TICKERS, USE_DEMO, LEVERAGE, RISK_PERCENT, STOP_LOSS_PCT, TAKE_PROFIT_PCT, LSTM_CONFIDENCE, TIMEFRAME, COOLDOWN_SECONDS, UPDATE_TRAILING_INTERVAL, TG_TOKEN, TG_CHAT
 
 logger = logging.getLogger("trainer")
 
@@ -22,12 +21,14 @@ def model_path(symbol: str) -> str:
     return os.path.join(MODEL_DIR, symbol.replace("-", "") + ".pkl")
 
 def download_weights():
+    """Скачивает веса из ветки weights в /tmp/lstm_weights/"""
     logger.info("⬇️ Скачиваем веса из GitHub...")
     zip_path = "/tmp/weights.zip"
     try:
+        # ✅ ИСПРАВЛЕНО: URL без пробелов
         r = requests.get("https://github.com/soul-code-tech/quantum-edge-ai-bot/archive/refs/heads/weights.zip", stream=True, timeout=30)
         if r.status_code != 200:
-            logger.warning(f"GitHub вернул {r.status_code} – пропускаем загрузку")
+            logger.warning(f"GitHub вернул {r.status_code} — пропускаем загрузку")
             return
         with open(zip_path, "wb") as f:
             for chunk in r.iter_content(chunk_size=8192):
@@ -71,7 +72,7 @@ def validate_model(model, df, bars_back=400):
         model.build_model((X.shape[1], X.shape[2]))
         model.model.fit(X_train, y_train, epochs=1, verbose=0)
         _, acc = model.model.evaluate(X_test, y_test, verbose=0)
-        logger.info(f"✅ Валидация {symbol}: acc={acc:.3f}")
+        logger.info(f"✅ Валидация {model_path('dummy').split('/')[-1]}: acc={acc:.3f}")
         return acc >= 0.52
     except Exception as e:
         logger.error(f"Валидация провалена: {e}")
@@ -115,7 +116,7 @@ def load_model(symbol: str, lookback: int = 60):
     try:
         with open(path, "rb") as fh:
             bundle = pickle.load(fh)
-        return bundle["ensemble"]
+        return bundle["ensemble"]   # ✅ возвращаем объект ensemble
     except Exception as e:
         logger.error(f"⚠️ Ошибка загрузки модели {symbol}: {e}")
         return None
@@ -133,7 +134,7 @@ def sequential_trainer(symbols, interval=3600 * 24, epochs=2):
     idx = 0
     while True:
         sym = symbols[idx % len(symbols)]
-        if not load_model(sym):   # свежесть через load_model
+        if not load_model(sym):
             train_one(sym, epochs=epochs)
         idx += 1
         time.sleep(interval)
