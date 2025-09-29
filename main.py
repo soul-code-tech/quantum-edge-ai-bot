@@ -9,7 +9,7 @@ from flask import Flask
 from data_fetcher import get_bars
 from strategy import calculate_strategy_signals
 from trader import BingXTrader
-from lstm_model import EnsemblePredictor
+from lstm_model import LSTMPredictor
 from trainer import train_one, load_model, download_weights, sequential_trainer
 from position_monitor import start_position_monitor
 from signal_cache import is_fresh_signal
@@ -29,7 +29,7 @@ app.register_blueprint(PNL_BP, url_prefix='/pnl')
 lstm_models = {}
 traders = {}
 for s in SYMBOLS:
-    lstm_models[s] = EnsemblePredictor()
+    lstm_models[s] = LSTMPredictor()
     traders[s] = BingXTrader(symbol=s, use_demo=USE_DEMO, leverage=LEVERAGE)
 
 def keep_alive():
@@ -79,10 +79,9 @@ def run_strategy():
                     atr = df['atr'].iloc[-1]
                     amount = max(0.001, (100 * RISK_PERCENT / 100) / (atr * 1.5))
                     logger.info(f"🎯 [СИГНАЛ] {side.upper()} {symbol} | P={lstm_prob:.2%} | ATR={atr:.2f} | Amt={amount:.4f}")
-                    traders[symbol].place_limit_order(
+                    traders[symbol].place_order(
                         side=side,
                         amount=amount,
-                        entry=current_price,
                         stop_loss_percent=STOP_LOSS_PCT,
                         take_profit_percent=TAKE_PROFIT_PCT
                     )
