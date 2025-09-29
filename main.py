@@ -1,5 +1,14 @@
 # main.py
 # 1. МГНОВЕННО ОТКРЫВАЕМ ПОРТ — до импортов
+# main.py  (самый верх, до любых импортов)
+import os, sys, threading, time, logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
+logger = logging.getLogger("main")
+logger.info("=== MAIN.PY СТАРТУЕТ ===")
 import os, socket, threading, time
 def _instant_port():
     port = int(os.environ.get("PORT", 10000))
@@ -93,7 +102,7 @@ def _log(stage: str, symbol: str, msg: str):
     logger.info(f"[{stage}] {symbol}: {msg}")
 
 def start_all():
-    logger.info("=== СТАРТ Web Service ===")
+    logger.info("=== START_ALL() ЗАПУЩЕН — через 5-10 сек появятся веса/обучение/сигналы ===")
     download_weights()
     trained = 0
     for s in SYMBOLS:
