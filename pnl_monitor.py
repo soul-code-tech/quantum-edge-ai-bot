@@ -12,7 +12,7 @@ from flask import Blueprint, jsonify, render_template_string
 logger = logging.getLogger("pnl_monitor")
 
 PNL_BP = Blueprint('pnl', __name__)
-JSON_FILE = "pnl_history.json"
+JSON_FILE = "/tmp/pnl_history.json"  # ← безопасно для Render
 
 def fetch_closed_pnl(api_key, secret, use_demo=False, symbols=None):
     """
@@ -130,12 +130,15 @@ HTML_PAGE = """
 
 @PNL_BP.route("/pnl")
 def pnl_json():
-    # ← передаём SYMBOLS из main.py
-    from main import SYMBOLS
+    # ✅ Получаем SYMBOLS из config, а не из main
+    from config import SYMBOLS
     df = fetch_closed_pnl(os.getenv('BINGX_API_KEY'), os.getenv('BINGX_SECRET_KEY'), use_demo=False, symbols=SYMBOLS)
     stats = calc_stats(df)
-    with open("pnl_history.json", 'w') as f:
-        json.dump(stats, f)
+    try:
+        with open(JSON_FILE, 'w') as f:
+            json.dump(stats, f)
+    except Exception as e:
+        logger.warning(f"Не удалось сохранить PnL: {e}")
     return jsonify(stats)
 
 @PNL_BP.route("/chart")
@@ -146,12 +149,15 @@ def start_pnl_monitor():
     def monitor():
         while True:
             try:
-                # ← передаём SYMBOLS из main.py
-                from main import SYMBOLS
+                # ✅ Получаем SYMBOLS из config, а не из main
+                from config import SYMBOLS
                 df = fetch_closed_pnl(os.getenv('BINGX_API_KEY'), os.getenv('BINGX_SECRET_KEY'), use_demo=False, symbols=SYMBOLS)
                 stats = calc_stats(df)
-                with open("pnl_history.json", 'w') as f:
-                    json.dump(stats, f)
+                try:
+                    with open(JSON_FILE, 'w') as f:
+                        json.dump(stats, f)
+                except Exception as e:
+                    logger.warning(f"Не удалось сохранить PnL: {e}")
 
                 # пишем итог каждый день в 00:05 UTC
                 now = datetime.utcnow()
