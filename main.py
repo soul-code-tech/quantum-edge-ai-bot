@@ -169,8 +169,28 @@ def start_all():
     threading.Thread(target=run_strategy, daemon=True).start()
     threading.Thread(target=sequential_trainer, args=(SYMBOLS, 3600, 2), daemon=True).start()
     start_position_monitor(traders, SYMBOLS)
+# ---------- одноразовая проверка символов (удалите после использования) ----------
+def check_and_fix_symbols():
+    logger.info("=== Проверяем реальные символы BingX ===")
+    try:
+        exchange = ccxt.bingx({'options': {'defaultType': 'swap'}, 'enableRateLimit': True})
+        exchange.load_markets()
+        real = [s for s in exchange.markets.keys() if s.endswith('-USDT') and exchange.markets[s].get('active')]
+        real_sorted = sorted(real)
+        logger.info("Реальные символы BingX:")
+        for s in real_sorted:
+            logger.info(f"  {s}")
+        # оставляем только пересечение с нашим списком
+        global SYMBOLS
+        SYMBOLS = [s for s in SYMBOLS if s in real]
+        logger.info(f"Оставлено после фильтрации: {SYMBOLS}")
+    except Exception as e:
+        logger.error(f"Ошибка проверки символов: {e}")
 
+# ---------- запускаем проверку при старте (один раз) ----------
+check_and_fix_symbols()
 if __name__ == "__main__":
     threading.Thread(target=start_all, daemon=True).start()
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+    
