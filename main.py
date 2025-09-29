@@ -14,7 +14,7 @@ from trainer import train_one, load_model, download_weights
 from position_monitor import start_position_monitor
 from signal_cache import is_fresh_signal
 from pnl_monitor import PNL_BP, start_pnl_monitor
-from config import USE_DEMO, LEVERAGE, RISK_PERCENT, STOP_LOSS_PCT, TAKE_PROFIT_PCT, LSTM_CONFIDENCE, TIMEFRAME, COOLDOWN_SECONDS, UPDATE_TRAILING_INTERVAL, TG_TOKEN, TG_CHAT
+from config import REAL_SWAP_TICKERS, USE_DEMO, LEVERAGE, RISK_PERCENT, STOP_LOSS_PCT, TAKE_PROFIT_PCT, LSTM_CONFIDENCE, TIMEFRAME, COOLDOWN_SECONDS, UPDATE_TRAILING_INTERVAL, TG_TOKEN, TG_CHAT
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,11 +26,7 @@ logger = logging.getLogger("main")
 app = Flask(__name__)
 app.register_blueprint(PNL_BP, url_prefix='/pnl')
 
-SYMBOLS = [
-    'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT',
-    'XRP-USDT', 'DOGE-USDT', 'MATIC-USDT', 'LTC-USDT',
-    'ADA-USDT', 'LINK-USDT'
-]
+SYMBOLS = REAL_SWAP_TICKERS   # ← реальные swap-тикеры BingX (проверены 29.09.2025)
 
 lstm_models = {}
 traders = {}
