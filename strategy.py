@@ -1,4 +1,3 @@
-# strategy.py
 import pandas as pd
 from ta.momentum import RSIIndicator
 from ta.volatility import AverageTrueRange
@@ -32,5 +31,4 @@ def calculate_strategy_signals(df, symbol: str, current_res_minutes=60):
 
     df['buy_signal'] = df['long_score'] >= 4
     df['sell_signal'] = df['short_score'] >= 4
-
     return df
