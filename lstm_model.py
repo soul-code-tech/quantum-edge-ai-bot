@@ -103,8 +103,16 @@ class LSTMPredictor:
             labels = (future_ret > 0).astype(int).values
             X_vals = feat[self.FINAL_FEATURES].values
             X_scaled = self.scaler.fit_transform(X_vals)
-            X, y = self._create_sequences(X_scaled, labels)
-            if len(X) == 0:
+                    # ---------- подготовка ----------
+            X, y = self._prepare_features(df)
+            if len(X) < self.lookback + 10:
+            print(f'⚠️ {symbol}: мало данных после подготовки')
+            return False
+
+        # масштабируем
+            X_scaled = self.scaler.fit_transform(X)
+            X_seq, y_seq = self._create_sequences(X_scaled, y)
+            if len(X_seq) == 0:
                 return False
 
             if self.model is None:
@@ -124,13 +132,12 @@ class LSTMPredictor:
         try:
             if self.model is None:
                 return 0.5
-            feat = self._prepare_features(df)
-            if len(feat) < self.lookback:
+            X, _ = self._prepare_features(df.tail(self.lookback + 5))
+            if len(X) < self.lookback:
                 return 0.5
-            recent = feat.tail(self.lookback)
-            X_vals = feat[self.FINAL_FEATURES].values
-            X_scaled = self.scaler.transform(X_vals)
-            seq = X_scaled.reshape(1, self.lookback, -1)
+            recent = X.tail(self.lookback)
+            recent_scaled = self.scaler.transform(recent)
+            seq = recent_scaled.reshape(1, self.lookback, -1)
             pred = float(self.model.predict(seq, verbose=0)[0][0])
             return pred
         except Exception as e:
