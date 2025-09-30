@@ -1,231 +1,142 @@
-# main.py
-import os
-import sys
+from flask import Flask
 import threading
 import time
-import logging
-from flask import Flask
+import os
 from data_fetcher import get_bars
 from strategy import calculate_strategy_signals
 from trader import BingXTrader
 from lstm_model import LSTMPredictor
-from trainer import train_one, load_model, download_weights, sequential_trainer
-from signal_cache import is_fresh_signal
-from config import USE_DEMO, LEVERAGE, RISK_PERCENT, STOP_LOSS_PCT, TAKE_PROFIT_PCT, LSTM_CONFIDENCE, TIMEFRAME, SYMBOLS
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
-    handlers=[logging.StreamHandler(sys.stdout)]
-)
-logger = logging.getLogger("main")
 
 app = Flask(__name__)
-lstm_models = {s: LSTMPredictor() for s in SYMBOLS}
-traders = {s: BingXTrader(symbol=s, use_demo=USE_DEMO, leverage=LEVERAGE) for s in SYMBOLS}
+_bot_started = False
 
-@app.route("/")
-def wake_up():
-    active = sum(1 for m in lstm_models.values() if getattr(m, 'is_trained', False))
-    return f"✅ Quantum Edge AI Bot LIVE | Активных моделей: {active}/{len(SYMBOLS)}", 200
+SYMBOLS = [
+    'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT',
+    'XRP-USDT', 'DOGE-USDT', 'TON-USDT', 'AVAX-USDT',
+    'SHIB-USDT', 'LINK-USDT', 'PENGU-USDT'
+]
 
-@app.route("/health")
-def health_check():
-    return "OK", 200
+RISK_PERCENT = 1.0
+STOP_LOSS_PCT = 1.5
+TAKE_PROFIT_PCT = 3.0
+TRAILING_PCT = 1.0
+LSTM_CONFIDENCE = 0.75
+TIMEFRAME = '1h'
+LOOKBACK = 200
+SIGNAL_COOLDOWN = 3600
+UPDATE_TRAILING_INTERVAL = 300
+TEST_INTERVAL = 300
 
-# ---------- GitHub-push ветки weights ----------
-import subprocess, tempfile, shutil
-from datetime import datetime
+lstm_models = {}
+traders = {}
 
-GH_TOKEN  = os.getenv("GH_TOKEN")
-REPO      = "soul-code-tech/quantum-edge-ai-bot"
-GIT_EMAIL = "bot@quantum-edge-ai-bot.render.com"
-GIT_NAME  = "QuantumEdgeBot"
+for symbol in SYMBOLS:
+    lstm_models[symbol] = LSTMPredictor(lookback=60)
+    traders[symbol] = BingXTrader(symbol=symbol, use_demo=True, leverage=10)
 
-def push_weights_to_github():
-    try:
-        logger.info("[GIT] Начинаем последовательное обучение + push в weights")
-        work_dir = tempfile.mkdtemp()
-        os.chdir(work_dir)
+print("✅ [СТАРТ] Quantum Edge AI Bot запущен на 10 криптопарах")
+print(f"📊 ПАРЫ: {', '.join(SYMBOLS)}")
+print(f"🧠 LSTM: порог уверенности {LSTM_CONFIDENCE * 100}%")
+print(f"💸 Риск: {RISK_PERCENT}% от депозита на сделку")
+print(f"⛔ Стоп-лосс: {STOP_LOSS_PCT}% | 🎯 Тейк-профит: {TAKE_PROFIT_PCT}%")
+print(f"📈 Трейлинг-стоп: {TRAILING_PCT}% от цены")
+print(f"⏳ Кулдаун: {SIGNAL_COOLDOWN} сек. на пару")
 
-        clone_url = f"https://{GH_TOKEN}@github.com/{REPO}.git"
-        subprocess.run(["git", "clone", "--branch", "weights", clone_url, "."], check=True,
-                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        subprocess.run(["git", "config", "user.email", GIT_EMAIL], check=True)
-        subprocess.run(["git", "config", "user.name", GIT_NAME], check=True)
+last_signal_time = {}
+last_trailing_update = {}
+last_test_order = 0
+total_trades = 0
 
-        for f in os.listdir("."):
-            if f.endswith((".pkl", ".weights.h5")):
-                os.remove(f)
-
-        weights_src = os.environ.get("WEIGHTS_DIR", "/tmp/lstm_weights")
-        os.makedirs(weights_src, exist_ok=True)
-
-        trained = 0
-        for symbol in SYMBOLS:
-            logger.info(f"[TRAIN] {symbol}: начинаем обучение (5 эпох)")
-            if train_one(symbol, epochs=5):
-                trained += 1
-                logger.info(f"[TRAIN] {symbol}: обучена")
-            else:
-                logger.warning(f"[TRAIN] {symbol}: не обучена — пропускаем")
-            time.sleep(1)
-
-        if trained == 0:
-            logger.warning("[GIT] Ни одна модель не обучена — нечего пушить")
-            return
-
-        for f in os.listdir(weights_src):
-            if f.endswith((".pkl", ".weights.h5")):
-                shutil.copy(os.path.join(weights_src, f), f)
-
-        subprocess.run(["git", "add", "."], check=True)
-        msg = f"авто: обновлены веса моделей {datetime.utcnow().strftime('%Y-%m-%d_%H:%M:%S')}"
-        subprocess.run(["git", "commit", "-m", msg], check=True)
-        subprocess.run(["git", "push", "origin", "weights"], check=True)
-
-        logger.info("[GIT] ✅ Веса успешно отправлены в ветку weights")
-    except Exception as e:
-        logger.error(f"[GIT] ❌ Ошибка push: {e}")
-    finally:
-        os.chdir("/opt/render/project/src")
-        shutil.rmtree(work_dir, ignore_errors=True)
-
-# ---------- торговый цикл ----------
 def run_strategy():
-    logger.info("=== Торговый цикл запущен ===")
+    global last_signal_time, last_trailing_update, last_test_order, total_trades
     while True:
         try:
+            current_time = time.time()
             for symbol in SYMBOLS:
-                if not getattr(lstm_models[symbol], 'is_trained', False):
-                    continue
-
-                df = get_bars(symbol, TIMEFRAME, 500)
+                print(f"\n--- [{time.strftime('%H:%M:%S')}] {symbol} ---")
+                df = get_bars(symbol, TIMEFRAME, LOOKBACK)
                 if df is None or len(df) < 100:
+                    print(f"❌ Недостаточно данных для {symbol}")
                     continue
-
-                df = calculate_strategy_signals(df, symbol, 60)
-
-                if not is_fresh_signal(symbol, df):
-                    continue
-
+                df = calculate_strategy_signals(df, 60)
                 current_price = df['close'].iloc[-1]
                 buy_signal = df['buy_signal'].iloc[-1]
                 sell_signal = df['sell_signal'].iloc[-1]
                 long_score = df['long_score'].iloc[-1]
                 short_score = df['short_score'].iloc[-1]
-
-                model = lstm_models[symbol]
-                lstm_prob = model.predict_next(df)
+                last_time = last_signal_time.get(symbol, 0)
+                if current_time - last_time < SIGNAL_COOLDOWN:
+                    print(f"⏳ Кулдаун: {symbol} — пропускаем")
+                    continue
+                lstm_prob = lstm_models[symbol].predict_next(df)
                 lstm_confident = lstm_prob > LSTM_CONFIDENCE
-
+                print(f"🧠 LSTM: {symbol} — {lstm_prob:.2%} → {'✅ ДОПУСТИМ' if lstm_confident else '❌ ОТКЛОНЕНО'}")
                 strong_strategy = (buy_signal and long_score >= 5) or (sell_signal and short_score >= 5)
                 if strong_strategy and lstm_confident:
                     side = 'buy' if buy_signal else 'sell'
+                    print(f"🎯 [СИГНАЛ] {side.upper()} на {symbol}")
                     atr = df['atr'].iloc[-1]
-                    amount = max(0.001, (100 * RISK_PERCENT / 100) / (atr * 1.5))
-                    logger.info(f"🎯 [SIGNAL] {side.upper()} {symbol} | P={lstm_prob:.2%} | ATR={atr:.2f} | Amt={amount:.4f}")
-                    traders[symbol].place_order(
+                    equity = 100.0
+                    risk_amount = equity * (RISK_PERCENT / 100)
+                    stop_distance = atr * 1.5
+                    amount = risk_amount / stop_distance if stop_distance > 0 else 0.001
+                    if amount < 0.001: amount = 0.001
+                    print(f"📊 Размер позиции: {amount:.6f} {symbol.split('-')[0]} | ATR: {atr:.4f}")
+                    order = traders[symbol].place_order(
                         side=side,
                         amount=amount,
                         stop_loss_percent=STOP_LOSS_PCT,
                         take_profit_percent=TAKE_PROFIT_PCT
                     )
-
+                    if order:
+                        print(f"✅ УСПЕХ! Ордер {side} на {symbol} отправлен.")
+                        total_trades += 1
+                        last_signal_time[symbol] = current_time
+                    else:
+                        print(f"❌ ОШИБКА: Ордер не отправлен на {symbol}")
+                else:
+                    if buy_signal or sell_signal:
+                        print(f"⚠️ {symbol}: Сигнал есть, но не достаточно сильный (score={long_score if buy_signal else short_score}) или LSTM не уверен ({lstm_prob:.2%}) — пропускаем.")
+            if current_time - last_trailing_update.get('global', 0) > UPDATE_TRAILING_INTERVAL:
+                print("\n🔄 Обновление трейлинг-стопов для всех пар...")
+                for symbol in SYMBOLS:
+                    traders[symbol].update_trailing_stop()
+                last_trailing_update['global'] = current_time
+            if current_time - last_test_order > TEST_INTERVAL:
+                test_symbol = SYMBOLS[0]
+                print(f"\n🎯 [ТЕСТ] Принудительный BUY на {test_symbol} для проверки связи...")
+                traders[test_symbol].place_order(
+                    side='buy',
+                    amount=0.001,
+                    stop_loss_percent=STOP_LOSS_PCT,
+                    take_profit_percent=TAKE_PROFIT_PCT
+                )
+                last_test_order = current_time
+            print("\n💤 Ждём 60 секунд до следующего цикла...")
             time.sleep(60)
         except Exception as e:
-            logger.error(f"Ошибка в стратегии: {e}")
+            print(f"❌ КРИТИЧЕСКАЯ ОШИБКА: {type(e).__name__}: {str(e)}")
+            print("⏳ Перезапуск цикла через 60 секунд...")
             time.sleep(60)
 
-# ---------- модифицированный start_all() ----------
-def start_all():
-    logger.info("=== START_ALL() ЗАПУЩЕН ===")
-    download_weights()
-    trained = 0
-    for s in SYMBOLS:
-        if load_model(s):
-            lstm_models[s].is_trained = True
-            trained += 1
-            logger.info(f"[LOAD] {s}: модель загружена")
-        else:
-            logger.info(f"[LOAD] {s}: весов нет – обучимся внутри Render")
-    if trained == 0:
-        logger.info("[TRAIN] Нет готовых весов – запускаем последовательное обучение")
-        push_weights_to_github()
-    else:
-        missing = [s for s in SYMBOLS if not getattr(lstm_models[s], 'is_trained', False)]
-        if missing:
-            logger.info(f"[TRAIN] Дообучаем недостающие: {missing}")
-            for s in missing:
-                if train_one(s, epochs=5):
-                    lstm_models[s].is_trained = True
-                    logger.info(f"[TRAIN] {s}: дообучена")
-                else:
-                    logger.warning(f"[TRAIN] {s}: дообучение провалено")
-                time.sleep(1)
+@app.before_request
+def start_bot_once():
+    global _bot_started
+    if not _bot_started:
+        thread = threading.Thread(target=run_strategy, daemon=True)
+        thread.start()
+        print("🚀 [СИСТЕМА] Фоновый торговый бот успешно запущен!")
+        _bot_started = True
 
-    logger.info(f"=== Итог: {sum(getattr(m,'is_trained',False) for m in lstm_models.values())}/{len(SYMBOLS)} моделей готовы ===")
+@app.route('/')
+def wake_up():
+    return "✅ Quantum Edge AI Bot is LIVE on 10 cryptos!", 200
 
-    threading.Thread(target=run_strategy, daemon=True).start()
-    threading.Thread(target=sequential_trainer, args=(SYMBOLS, 3600, 2), daemon=True).start()
-# ---------- GitHub-push ветки weights ----------
-import subprocess, tempfile, shutil
-from datetime import datetime
+@app.route('/health')
+def health_check():
+    return "OK", 200
 
-GH_TOKEN  = os.getenv("GH_TOKEN")
-REPO      = "soul-code-tech/quantum-edge-ai-bot"
-GIT_EMAIL = "bot@quantum-edge-ai-bot.render.com"
-GIT_NAME  = "QuantumEdgeBot"
-
-def push_weights_to_github():
-    try:
-        logger.info("[GIT] Начинаем последовательное обучение + push в weights")
-        work_dir = tempfile.mkdtemp()
-        os.chdir(work_dir)
-
-        clone_url = f"https://{GH_TOKEN}@github.com/{REPO}.git"
-        subprocess.run(["git", "clone", "--branch", "weights", clone_url, "."], check=True,
-                       stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        subprocess.run(["git", "config", "user.email", GIT_EMAIL], check=True)
-        subprocess.run(["git", "config", "user.name", GIT_NAME], check=True)
-
-        for f in os.listdir("."):
-            if f.endswith((".pkl", ".weights.h5")):
-                os.remove(f)
-
-        weights_src = os.environ.get("WEIGHTS_DIR", "/tmp/lstm_weights")
-        os.makedirs(weights_src, exist_ok=True)
-
-        trained = 0
-        for symbol in SYMBOLS:
-            logger.info(f"[TRAIN] {symbol}: начинаем обучение ({os.getenv('EPOCHS', 5)} эпох)")
-            if train_one(symbol, epochs=int(os.getenv('EPOCHS', 5))):
-                trained += 1
-                logger.info(f"[TRAIN] {symbol}: обучена")
-            else:
-                logger.warning(f"[TRAIN] {symbol}: не обучена — пропускаем")
-            time.sleep(1)
-
-        if trained == 0:
-            logger.warning("[GIT] Ни одна модель не обучена — нечего пушить")
-            return
-
-        for f in os.listdir(weights_src):
-            if f.endswith((".pkl", ".weights.h5")):
-                shutil.copy(os.path.join(weights_src, f), f)
-
-        subprocess.run(["git", "add", "."], check=True)
-        msg = f"авто: обновлены веса моделей {datetime.utcnow().strftime('%Y-%m-%d_%H:%M:%S')}"
-        subprocess.run(["git", "commit", "-m", msg], check=True)
-        subprocess.run(["git", "push", "origin", "weights"], check=True)
-
-        logger.info("[GIT] ✅ Веса успешно отправлены в ветку weights")
-    except Exception as e:
-        logger.error(f"[GIT] ❌ Ошибка push: {e}")
-    finally:
-        os.chdir("/opt/render/project/src")
-        shutil.rmtree(work_dir, ignore_errors=True)
 if __name__ == "__main__":
-    threading.Thread(target=start_all, daemon=True).start()
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    print(f"🌐 Flask сервер запущен на порту {port}")
+    app.run(host='0.0.0.0', port=port)
