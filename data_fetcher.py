@@ -13,8 +13,8 @@ def get_bars(symbol, timeframe="1h", limit=500):
     except:
         return None
 
+# data_fetcher.py (обновлённая часть)
 def get_funding_rate(symbol):
-    """Возвращает funding rate в % (например, 0.01 = 0.01%)."""
     try:
         ex = ccxt.bingx()
         funding = ex.fetch_funding_rate(symbol)
