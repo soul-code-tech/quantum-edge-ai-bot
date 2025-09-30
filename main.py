@@ -6,16 +6,16 @@ from data_fetcher import get_bars
 from strategy import calculate_strategy_signals
 from trader import BingXTrader
 from lstm_model import LSTMPredictor
+import ccxt
 
 app = Flask(__name__)
 _bot_started = False
 
 SYMBOLS = [
     'BTC-USDT', 'ETH-USDT', 'SOL-USDT', 'BNB-USDT',
-    'XRP-USDT', 'DOGE-USDT', 'TON-USDT', 'AVAX-USDT',
-    'SHIB-USDT', 'LINK-USDT', 'PENGU-USDT'
+    'XRP-USDT', 'DOGE-USDT', 'AVAX-USDT', 'SHIB-USDT',
+    'LINK-USDT', 'PENGU-USDT'
 ]
-
 RISK_PERCENT      = 1.0
 STOP_LOSS_PCT     = 1.5
 TAKE_PROFIT_PCT   = 3.0
@@ -47,32 +47,31 @@ print(f"📈 Трейлинг-стоп: {TRAILING_PCT}% от цены")
 print(f"⏳ Кулдаун: {SIGNAL_COOLDOWN} сек. на пару")
 print(f"🔄 Дообучение: каждые {RETRAIN_INTERVAL // 60} минут на {RETRAIN_EPOCHS} эпохах")
 
-# ------------------------------------------------------------------
-def initialize_models():
-    global lstm_models
-    os.makedirs('weights', exist_ok=True)
-    for s in SYMBOLS:
-        lstm_models[s] = LSTMPredictor(lookback=60, model_dir='weights')
-
+# --------------------- helpers ---------------------
 def market_exists(symbol: str) -> bool:
     try:
-        import ccxt
         exch = ccxt.bingx({'options': {'defaultType': 'swap'}, 'enableRateLimit': True})
         _ = exch.market(symbol)
         return True
     except Exception:
         return False
 
+def initialize_models():
+    global lstm_models
+    os.makedirs('weights', exist_ok=True)
+    for s in SYMBOLS:
+        lstm_models[s] = LSTMPredictor(lookback=60, model_dir='weights')
+
 def perform_initial_training():
-    """Первичное обучение 5 эпох, если весов нет."""
+    """Последовательное обучение 5 эпох, если весов ещё нет."""
     for sym in SYMBOLS:
+        if lstm_models[sym].load(sym):          # веса уже есть
+            print(f'✅ {sym}: загружена сохранённая модель')
+            continue
         if not market_exists(sym):
             print(f'⚠️ {sym}: нет на BingX – пропускаем')
             continue
-        print(f'\n🎓 {sym}: первичное обучение (5 эпох)...')
- 
-            continue
-        print(f'🎓 {sym}: первичное обучение ({INITIAL_EPOCHS} эпох)...')
+        print(f'\n🎓 {sym}: первичное обучение ({INITIAL_EPOCHS} эпох)...')
         df = get_bars(sym, TIMEFRAME, 500)
         if df is None or len(df) < 300:
             print(f'❌ {sym}: недостаточно данных')
@@ -87,8 +86,10 @@ def perform_retraining():
     global last_retrain_time
     if time.time() - last_retrain_time < RETRAIN_INTERVAL:
         return
-    print(f"\n🔄 Начало дообучения ({RETRAIN_EPOCHS} эпох)...")
+    print(f'\n🔄 Начало дообучения ({RETRAIN_EPOCHS} эпох)...')
     for sym in SYMBOLS:
+        if not market_exists(sym):
+            continue
         print(f'🧠 {sym}: дообучение...')
         df = get_bars(sym, TIMEFRAME, LOOKBACK)
         if df is None or len(df) < 100:
@@ -99,7 +100,7 @@ def perform_retraining():
             lstm_models[sym].save(sym)
     last_retrain_time = time.time()
 
-# ------------------------------------------------------------------
+# --------------------- основной цикл ---------------------
 def run_strategy():
     global last_signal_time, last_trailing_update, last_test_order, total_trades, last_retrain_time
 
@@ -107,11 +108,13 @@ def run_strategy():
     perform_initial_training()
     last_retrain_time = time.time()
 
-    print("\n🚀 Бот полностью запущен и готов к торговле!")
+    print('\n🚀 Бот полностью запущен и готов к торговле!')
     while True:
         try:
             perform_retraining()
             for symbol in SYMBOLS:
+                if not market_exists(symbol):
+                    continue
                 print(f"\n--- [{time.strftime('%H:%M:%S')}] {symbol} ---")
                 df = get_bars(symbol, TIMEFRAME, LOOKBACK)
                 if df is None or len(df) < 100:
@@ -128,8 +131,8 @@ def run_strategy():
                     print(f"⏳ Кулдаун: {symbol} — пропускаем")
                     continue
 
-                lstm_prob   = lstm_models[symbol].predict_next(df)
-                lstm_conf   = lstm_prob > LSTM_CONFIDENCE
+                lstm_prob = lstm_models[symbol].predict_next(df)
+                lstm_conf = lstm_prob > LSTM_CONFIDENCE
                 print(f"🧠 LSTM: {lstm_prob:.2%} → {'✅' if lstm_conf else '❌'}")
 
                 strong = (buy_signal and long_score >= 5) or (sell_signal and short_score >= 5)
@@ -157,7 +160,8 @@ def run_strategy():
             # трейлинг и тестовый ордер каждые 5 минут
             if time.time() - last_trailing_update.get('global', 0) > UPDATE_TRAILING_INTERVAL:
                 for s in SYMBOLS:
-                    traders[s].update_trailing_stop()
+                    if market_exists(s):
+                        traders[s].update_trailing_stop()
                 last_trailing_update['global'] = time.time()
 
             if time.time() - last_test_order > TEST_INTERVAL:
@@ -173,7 +177,7 @@ def run_strategy():
             print(f"❌ КРИТ: {e}")
             time.sleep(60)
 
-# ------------------------------------------------------------------
+# --------------------- flask ---------------------
 @app.before_request
 def start_bot_once():
     global _bot_started
