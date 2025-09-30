@@ -95,8 +95,8 @@ class BingXTrader:
     def place_order(self, side, amount, stop_loss_percent=1.5, take_profit_percent=3.0):
         """Размещает ордер с учетом правильной работы плеча"""
         try:
-            # Проверяем плечо перед размещением ордера
-            self._verify_leverage()
+            # гарантированно ставим нужное плечо
+            self._set_leverage_v3(self.leverage)
             
             print(f"📤 Отправка рыночного ордера: {side} {amount} {self.symbol}")
             
