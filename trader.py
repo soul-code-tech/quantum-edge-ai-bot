@@ -1,6 +1,7 @@
+# trader.py
+import ccxt
 import os
 import logging
-import ccxt
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -26,17 +27,17 @@ class BingXTrader:
 
     def _set_leverage(self, leverage, side="LONG"):
         try:
-            self.exchange.load_markets()
+            self.exchange.load_markets()  # ленивая загрузка
             self.exchange.set_leverage(leverage, symbol=self.symbol, params={'side': side})
-            print(f"✅ {self.symbol}: плечо установлено на {leverage}x {side}")
+            logger.info(f"✅ {self.symbol}: плечо установлено на {leverage}x {side}")
         except Exception as e:
-            print(f"⚠️ Плечо {self.symbol}: {e}")
+            logger.warning(f"⚠️ Плечо {self.symbol}: {e}")
 
     def place_order(self, side, amount, stop_loss_percent=1.5, take_profit_percent=3.0):
         try:
-            self.exchange.load_markets()  # ← ленивая
+            self.exchange.load_markets()  # ленивая загрузка
             if self.symbol not in self.exchange.markets:
-                print(f"{self.symbol} отсутствует на BingX – пропускаем")
+                logger.warning(f"{self.symbol} отсутствует на BingX – пропускаем")
                 return None
 
             logger.info(f"📤 Отправка рыночного ордера: {side} {amount} {self.symbol}")
