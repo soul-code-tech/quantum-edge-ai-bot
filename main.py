@@ -25,7 +25,6 @@ TIMEFRAME         = '1h'
 LOOKBACK          = 200
 SIGNAL_COOLDOWN   = 3600
 UPDATE_TRAILING_INTERVAL = 300
-TEST_INTERVAL     = 300
 INITIAL_EPOCHS    = 5
 RETRAIN_EPOCHS    = 2
 RETRAIN_INTERVAL  = 30 * 60          # 30 минут
@@ -49,11 +48,13 @@ print(f"🔄 Дообучение: каждые {RETRAIN_INTERVAL // 60} мин�
 
 # --------------------- helpers ---------------------
 def market_exists(symbol: str) -> bool:
+    """Проверяет наличие символа на BingX (swap)."""
     try:
         exch = ccxt.bingx({'options': {'defaultType': 'swap'}, 'enableRateLimit': True})
-        _ = exch.market(symbol)
-        return True
-    except Exception:
+        exch.load_markets()
+        return symbol in exch.markets
+    except Exception as e:
+        print(f'⚠️ market_exists({symbol}): {e}')
         return False
 
 def initialize_models():
@@ -63,13 +64,13 @@ def initialize_models():
         lstm_models[s] = LSTMPredictor(lookback=60, model_dir='weights')
 
 def perform_initial_training():
-    """Последовательное обучение 5 эпох, если весов ещё нет."""
+    """Последовательное обучение 5 эпох, если веса ещё не сохранены."""
     for sym in SYMBOLS:
-        if lstm_models[sym].load(sym):          # веса уже есть
-            print(f'✅ {sym}: загружена сохранённая модель')
-            continue
         if not market_exists(sym):
             print(f'⚠️ {sym}: нет на BingX – пропускаем')
+            continue
+        if lstm_models[sym].load(sym):          # веса уже есть
+            print(f'✅ {sym}: загружена сохранённая модель')
             continue
         print(f'\n🎓 {sym}: первичное обучение ({INITIAL_EPOCHS} эпох)...')
         df = get_bars(sym, TIMEFRAME, 500)
@@ -157,20 +158,19 @@ def run_strategy():
                 else:
                     print(f"⚠️ {symbol}: сигнал слабый или LSTM не уверен")
 
-            # трейлинг и тестовый ордер каждые 5 минут
+            # обновление трейлинг-стопов каждые 5 минут
             if time.time() - last_trailing_update.get('global', 0) > UPDATE_TRAILING_INTERVAL:
                 for s in SYMBOLS:
                     if market_exists(s):
                         traders[s].update_trailing_stop()
                 last_trailing_update['global'] = time.time()
 
-            if time.time() - last_test_order > TEST_INTERVAL:
-                test_sym = SYMBOLS[0]
-                print(f"\n🎯 [ТЕСТ] BUY на {test_sym}")
-                traders[test_sym].place_order(side='buy', amount=0.001,
-                                              stop_loss_percent=STOP_LOSS_PCT,
-                                              take_profit_percent=TAKE_PROFIT_PCT)
-                last_test_order = time.time()
+            # тест-ордер отключён до первого успешного обучения
+            # if time.time() - last_test_order > TEST_INTERVAL:
+            #     test_sym = SYMBOLS[0]
+            #     print(f"\n🎯 [ТЕСТ] BUY на {test_sym}")
+            #     traders[test_sym].place_order(...)
+            #     last_test_order = time.time()
 
             time.sleep(60)
         except Exception as e:
