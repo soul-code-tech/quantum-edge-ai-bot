@@ -47,14 +47,22 @@ class LSTMPredictor:
         return model
 
     # ---------- подготовка ----------
-    def _prepare_features(self, df: pd.DataFrame) -> pd.DataFrame:
+    def _prepare_features(self, df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
+        """возвращает (X, y) – y строится ДО выбрасывания 'close'"""
         feat = df[self.feature_columns].copy()
         feat['price_change']  = feat['close'].pct_change()
         feat['volume_change'] = feat['volume'].pct_change()
         feat['rsi_norm']      = feat['rsi'] / 100.0
         feat['sma_ratio']     = feat['sma20'] / feat['sma50']
         feat['atr_norm']      = feat['atr'] / feat['close']
-        return feat[self.FINAL_FEATURES].dropna()
+
+        # целевая переменная – ДО выбрасывания 'close'
+        future_ret = feat['close'].pct_change(5).shift(-5)
+        y = (future_ret > 0).astype(int).values
+
+        X = feat[self.FINAL_FEATURES].dropna()
+        y = y[X.index]                     # выравниваем размеры
+        return X, y
 
     def _create_sequences(self, data, labels=None):
         seq, targ = [], []
