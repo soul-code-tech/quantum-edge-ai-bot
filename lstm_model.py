@@ -9,16 +9,18 @@ import pickle
 import time
 
 class LSTMPredictor:
-    FINAL_FEATURES = ['volume', 'rsi_norm', 'sma_ratio', 'atr_norm', 'price_change', 'volume_change']   # 6 признаков
+    lookback = 60
+    FINAL_FEATURES = ['volume', 'rsi_norm', 'sma_ratio', 'atr_norm',
+                      'price_change', 'volume_change']
+
     def __init__(self, lookback=60, model_dir='weights'):
         self.lookback      = lookback
         self.model_dir     = model_dir
         self.model         = None
         self.scaler        = MinMaxScaler()
         self.feature_columns = ['close', 'volume', 'rsi', 'sma20', 'sma50', 'atr']
-        # сразу создаём пути, чтобы не было None
-        self.model_path    = os.path.join(model_dir, 'dummy.weights.h5')
-        self.scaler_path   = os.path.join(model_dir, 'dummy_scaler.pkl')
+        self.model_path    = None
+        self.scaler_path   = None
         self.last_training_time = 0
 
     # ---------- пути ----------
@@ -31,8 +33,7 @@ class LSTMPredictor:
     # ---------- архитектура ----------
     def _create_model(self, input_shape):
         model = Sequential([
-            LSTM(50, return_sequences=True,
-                 input_shape=(self.lookback, len(self.FINAL_FEATURES))),
+            LSTM(50, return_sequences=True, input_shape=input_shape),
             Dropout(0.2),
             LSTM(50, return_sequences=True),
             Dropout(0.2),
@@ -48,7 +49,6 @@ class LSTMPredictor:
 
     # ---------- подготовка ----------
     def _prepare_features(self, df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
-        """возвращает (X, y) – y строится ДО выбрасывания 'close'"""
         feat = df[self.feature_columns].copy()
         feat['price_change']  = feat['close'].pct_change()
         feat['volume_change'] = feat['volume'].pct_change()
@@ -56,12 +56,12 @@ class LSTMPredictor:
         feat['sma_ratio']     = feat['sma20'] / feat['sma50']
         feat['atr_norm']      = feat['atr'] / feat['close']
 
-        # целевая переменная – ДО выбрасывания 'close'
+        # целевая переменная – до выбрасывания 'close'
         future_ret = feat['close'].pct_change(5).shift(-5)
         y = (future_ret > 0).astype(int).values
 
         X = feat[self.FINAL_FEATURES].dropna()
-        y = y[X.index]                     # выравниваем размеры
+        y = y[X.index]
         return X, y
 
     def _create_sequences(self, data, labels=None):
@@ -83,7 +83,7 @@ class LSTMPredictor:
     def load(self, symbol: str) -> bool:
         if not (os.path.exists(self.model_path) and os.path.exists(self.scaler_path)):
             return False
-        self.model = self._create_model((self.lookback, len(self.feature_columns)))
+        self.model = self._create_model((self.lookback, len(self.FINAL_FEATURES)))
         self.model.load_weights(self.model_path)
         with open(self.scaler_path, 'rb') as f:
             self.scaler = pickle.load(f)
@@ -94,31 +94,20 @@ class LSTMPredictor:
     def train_model(self, df: pd.DataFrame, symbol: str, epochs=5, is_initial=True):
         try:
             print(f"🧠 {'Первичное' if is_initial else 'Дообучение'} {symbol} на {epochs} эпох")
-            feat = self._prepare_features(df)
-            if len(feat) < self.lookback + 10:
-                print(f'⚠️ {symbol}: мало данных')
-                return False
-
-            future_ret = feat['close'].pct_change(5).shift(-5)
-            labels = (future_ret > 0).astype(int).values
-            X_vals = feat[self.FINAL_FEATURES].values
-            X_scaled = self.scaler.fit_transform(X_vals)
-                    # ---------- подготовка ----------
             X, y = self._prepare_features(df)
             if len(X) < self.lookback + 10:
-            print(f'⚠️ {symbol}: мало данных после подготовки')
-            return False
+                print(f'⚠️ {symbol}: мало данных после подготовки')
+                return False
 
-        # масштабируем
             X_scaled = self.scaler.fit_transform(X)
             X_seq, y_seq = self._create_sequences(X_scaled, y)
             if len(X_seq) == 0:
                 return False
 
             if self.model is None:
-                self.model = self._create_model((X.shape[1], X.shape[2]))
+                self.model = self._create_model((X_seq.shape[1], X_seq.shape[2]))
 
-            hist = self.model.fit(X, y, epochs=epochs, batch_size=32,
+            hist = self.model.fit(X_seq, y_seq, epochs=epochs, batch_size=32,
                                   validation_split=0.1, verbose=1, shuffle=False)
             self.last_training_time = time.time()
             print(f"✅ {symbol}: обучено  loss={hist.history['loss'][-1]:.4f}  acc={hist.history['accuracy'][-1]:.4f}")
