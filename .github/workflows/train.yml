@@ -1,51 +1,42 @@
-name: Train & Update Weights
+name: Train Weekly (Walk-forward)
 
 on:
   schedule:
-    - cron: "*/30 * * * *"  # Каждые 30 минут
-  workflow_dispatch:        # Запуск вручную
+    - cron: "0 2 * * 0"  # Каждое воскресенье в 2:00 UTC
+  workflow_dispatch:
 
 jobs:
   train:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     steps:
-      - name: Checkout main branch
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           ref: main
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      - run: pip install -r requirements.txt
 
-      - name: Checkout weights branch (shallow)
-        run: |
+      - run: |
           git fetch origin weights:weights
           git checkout weights
-          # Очищаем всё, кроме .gitkeep
           find . -type f ! -name ".gitkeep" -delete
           find . -type d ! -name "." ! -name "weights" -exec rm -rf {} + 2>/dev/null || true
 
-      - name: Run training
-        env:
+      - env:
           BINGX_API_KEY: ${{ secrets.BINGX_API_KEY }}
           BINGX_SECRET_KEY: ${{ secrets.BINGX_SECRET_KEY }}
         run: python scripts/train_all.py
 
-      - name: Commit and push updated weights
-        run: |
+      - run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add weights/
           if ! git diff --cached --quiet; then
-            git commit -m "🤖 Auto-update weights $(date -u)"
+            git commit -m "🤖 Weekly retrain (walk-forward 7d)"
             git push origin weights
-          else
-            echo "Нет изменений"
           fi
