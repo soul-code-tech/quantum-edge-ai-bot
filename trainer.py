@@ -7,7 +7,9 @@ from strategy import calculate_strategy_signals
 MODEL_DIR = "weights"
 
 def model_path(symbol):
-    clean = symbol.replace("/", "").replace(":", "").replace("-", "")
+    base = symbol.split("/")[0]
+    quote = symbol.split("/")[1].split(":")[0]
+    clean = base + quote
     return os.path.join(MODEL_DIR, clean + ".pkl")
 
 def train_one(symbol: str, lookback: int = 60, epochs: int = 5, existing_model=None) -> bool:
