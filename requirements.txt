@@ -1,4 +1,5 @@
-tensorflow==2.16.1
+# requirements.txt
+tensorflow>=2.20.0  # первая версия с поддержкой Python 3.13
 ccxt==4.2.75
 ta==0.10.3
 pandas==2.2.2
