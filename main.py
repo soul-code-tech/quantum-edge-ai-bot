@@ -380,8 +380,7 @@ if __name__ == "__main__":
      except subprocess.CalledProcessError as e:
          logger.error(f"❌ Не удалось клонировать веса: {e}")
     # -------------------------------------
-    # -------------------------------------
-
+    
     init_models()
 
     init_models()  # ← вызываем ОДИН раз
