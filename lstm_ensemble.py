@@ -2,7 +2,6 @@
 import os
 import pickle
 import numpy as np
-from sklearn.linear_model import LogisticRegression
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 from tensorflow.keras.optimizers import Adam
@@ -41,8 +40,14 @@ class LSTMPredictor:
         X, y = [], []
         for i in range(self.lookback, len(data) - 1):
             X.append(data[i - self.lookback:i])
-            y.append(1.0 if data[i + 1, 3] > data[i, 3] else 0.0)
-        return np.array(X), np.array(y)
+            # Бинарная цель: вырастет ли цена через 1 бар?
+            target = 1.0 if data[i + 1, 3] > data[i, 3] else 0.0
+            y.append(target)
+        y = np.array(y)
+        # Защита от однообразных данных
+        if len(np.unique(y)) < 2:
+            raise ValueError("Данные содержат только один класс")
+        return np.array(X), y
 
     def train(self, df, epochs=5):
         data = self.prepare_features(df.tail(400))
@@ -53,6 +58,8 @@ class LSTMPredictor:
 
     def predict_proba(self, df):
         data = self.prepare_features(df.tail(self.lookback + 10))
+        if len(data) < self.lookback:
+            raise ValueError("Недостаточно данных для предсказания")
         seq = data[-self.lookback:].reshape(1, self.lookback, 5)
         return float(self.model.predict(seq, verbose=0)[0, 0])
 
@@ -61,7 +68,6 @@ class LSTMEnsemble:
     def __init__(self):
         self.model1 = LSTMPredictor(lookback=60)
         self.model2 = LSTMPredictor(lookback=90)
-        self.meta_model = LogisticRegression()
         self.is_trained = False
 
     def build_models(self):
@@ -71,28 +77,22 @@ class LSTMEnsemble:
     def train(self, df, epochs=5):
         self.model1.train(df, epochs=epochs)
         self.model2.train(df, epochs=epochs)
-        # Для простоты мета-модель не обучаем на валидации
-        # В продакшене — обучайте на OOS данных
-        self.meta_model.fit([[0.5, 0.5]], [1])  # dummy fit to avoid error
         self.is_trained = True
 
     def predict_proba(self, df):
         p1 = self.model1.predict_proba(df)
         p2 = self.model2.predict_proba(df)
-        # Простое усреднение (можно заменить на meta_model.predict_proba)
-        ensemble_pred = (p1 + p2) / 2.0
-        return float(ensemble_pred)
+        return (p1 + p2) / 2.0  # Простое усреднение
 
     def save(self, path):
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        # Сохраняем веса с расширением .weights.h5 (требование TF 2.19+)
+        # Сохраняем с расширением .weights.h5 (требование TF 2.19+)
         self.model1.model.save_weights(path.replace(".pkl", ".m1.weights.h5"))
         self.model2.model.save_weights(path.replace(".pkl", ".m2.weights.h5"))
         with open(path, "wb") as f:
             pickle.dump({
                 "scaler1": self.model1.scaler,
-                "scaler2": self.model2.scaler,
-                "meta": self.meta_model
+                "scaler2": self.model2.scaler
             }, f)
 
     @classmethod
@@ -110,6 +110,5 @@ class LSTMEnsemble:
             bundle = pickle.load(f)
         obj.model1.scaler = bundle["scaler1"]
         obj.model2.scaler = bundle["scaler2"]
-        obj.meta_model = bundle["meta"]
         obj.is_trained = True
         return obj
