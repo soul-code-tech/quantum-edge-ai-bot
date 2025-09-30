@@ -15,8 +15,9 @@ class LSTMPredictor:
         self.model         = None
         self.scaler        = MinMaxScaler()
         self.feature_columns = ['close', 'volume', 'rsi', 'sma20', 'sma50', 'atr']
-        self.model_path    = None
-        self.scaler_path   = None
+        # сразу создаём пути, чтобы не было None
+        self.model_path    = os.path.join(model_dir, 'dummy.weights.h5')
+        self.scaler_path   = os.path.join(model_dir, 'dummy_scaler.pkl')
         self.last_training_time = 0
 
     # ---------- пути ----------
