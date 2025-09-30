@@ -2,14 +2,13 @@ import os
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
-from tensorflow.keras.models import Sequential, load_model
+from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 from tensorflow.keras.optimizers import Adam
 import pickle
 import time
 
 class LSTMPredictor:
-    lookback = 60
     FINAL_FEATURES = ['volume', 'rsi_norm', 'sma_ratio', 'atr_norm',
                       'price_change', 'volume_change']
 
@@ -19,8 +18,7 @@ class LSTMPredictor:
         self.model         = None
         self.scaler        = MinMaxScaler()
         self.feature_columns = ['close', 'volume', 'rsi', 'sma20', 'sma50', 'atr']
-        # пути будут заданы позже, но не None
-        self.model_path    = ''
+        self.model_path    = ''   # будет заполнено позже
         self.scaler_path   = ''
         self.last_training_time = 0
 
@@ -57,10 +55,8 @@ class LSTMPredictor:
         feat['sma_ratio']     = feat['sma20'] / feat['sma50']
         feat['atr_norm']      = feat['atr'] / feat['close']
 
-        # целевая переменная – до выбрасывания 'close'
         future_ret = feat['close'].pct_change(5).shift(-5)
         y = (future_ret > 0).astype(int).values
-
         X = feat[self.FINAL_FEATURES].dropna()
         y = y[X.index]
         return X, y
@@ -81,9 +77,9 @@ class LSTMPredictor:
             pickle.dump(self.scaler, f)
         print(f'💾 {symbol}: веса сохранены ➜ {self.model_path}')
 
-    def load_or_create_model(self, symbol: str) -> bool:
-        self.model_path, self.scaler_path = self._get_model_paths(symbol)
-        return self.load(symbol)
+    def load(self, symbol: str) -> bool:
+        if not (os.path.exists(self.model_path) and os.path.exists(self.scaler_path)):
+            return False
         self.model = self._create_model((self.lookback, len(self.FINAL_FEATURES)))
         self.model.load_weights(self.model_path)
         with open(self.scaler_path, 'rb') as f:
