@@ -14,23 +14,21 @@ import ccxt
 
 logger = logging.getLogger("trainer")
 
-# Используем папку 'weights' в корне проекта (а не /tmp)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = os.getenv("WEIGHTS_DIR", os.path.join(BASE_DIR, "weights"))
-os.makedirs(MODEL_DIR, exist_ok=True)  # Создаём папку при импорте
+os.makedirs(MODEL_DIR, exist_ok=True)
 
 def _log(stage: str, symbol: str, msg: str):
     logger.info(f"[{stage}] {symbol}: {msg}")
 
 def model_path(symbol: str) -> str:
-    clean_symbol = symbol.replace("-", "").replace("/", "")
-    return os.path.join(MODEL_DIR, clean_symbol + ".pkl")
+    clean = symbol.replace("-", "").replace("/", "").replace(":", "")
+    return os.path.join(MODEL_DIR, clean + ".pkl")
 
 def download_weights():
     _log("WEIGHTS", "ALL", "⬇️ Начинаем скачивание весов с GitHub")
-    zip_path = os.path.join("/tmp", "weights.zip")
+    zip_path = "/tmp/weights.zip"
     extract_to = "/tmp/quantum-edge-ai-bot-weights"
-    
     try:
         url = "https://github.com/soul-code-tech/quantum-edge-ai-bot/archive/refs/heads/weights.zip"
         r = requests.get(url, stream=True, timeout=30)
@@ -81,10 +79,10 @@ def validate_model(model, df, bars_back=400):
             return False
         X = X.reshape((X.shape[0], X.shape[1], 5))
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
-        # Модель уже должна быть построена и, возможно, иметь веса
         model.model.fit(X_train, y_train, epochs=1, verbose=0)
-        _, acc = model.model.evaluate(X_test, y_test, verbose=0)
-        logger.info(f"✅ Валидация модели для {model.symbol}: acc={acc:.3f}")
+        loss, mae = model.model.evaluate(X_test, y_test, verbose=0)
+        acc = 1.0 - min(1.0, loss / (y_test.std() + 1e-6))  # Пример простой метрики
+        logger.info(f"✅ Валидация {model.symbol}: loss={loss:.4f}, mae={mae:.4f}, pseudo-acc={acc:.3f}")
         return acc >= 0.52
     except Exception as e:
         logger.error(f"Валидация провалена: {e}")
@@ -110,7 +108,7 @@ def train_one(symbol: str, lookback: int = 60, epochs: int = 5, existing_model=N
         else:
             model = LSTMPredictor(lookback=lookback)
             model.symbol = symbol
-            model.build_model((lookback, 5))  # Создаём архитектуру
+            model.build_model((lookback, 5))
 
         model.train(df, epochs=epochs, bars_back=400)
 
@@ -118,9 +116,7 @@ def train_one(symbol: str, lookback: int = 60, epochs: int = 5, existing_model=N
             _log("TRAIN", symbol, "Модель не прошла валидацию – пропускаем")
             return False
 
-        # Убедимся, что папка существует (на всякий случай)
         os.makedirs(MODEL_DIR, exist_ok=True)
-
         weight_file = model_path(symbol).replace(".pkl", ".weights.h5")
         model.model.save_weights(weight_file)
         with open(model_path(symbol), "wb") as fh:
@@ -154,10 +150,7 @@ def load_model(symbol: str, lookback: int = 60):
         return None
 
 def sequential_trainer(symbols, interval=3600, epochs=2):
-    # Убедимся, что папка weights существует
     os.makedirs(MODEL_DIR, exist_ok=True)
-    
-    # Попробуем скачать веса, если папка пуста
     if not os.listdir(MODEL_DIR):
         download_weights()
 
@@ -165,7 +158,6 @@ def sequential_trainer(symbols, interval=3600, epochs=2):
     while True:
         sym = symbols[idx % len(symbols)]
         _log("RETRAIN", sym, "Проверяем наличие модели для дообучения")
-        
         model = load_model(sym, lookback=60)
         if model is not None:
             _log("RETRAIN", sym, "Модель загружена – дообучаем")
@@ -173,9 +165,7 @@ def sequential_trainer(symbols, interval=3600, epochs=2):
         else:
             _log("RETRAIN", sym, "Модель не найдена – обучаем с нуля")
             success = train_one(sym, epochs=epochs)
-        
         if not success:
             _log("RETRAIN", sym, "Обучение завершилось неудачей")
-        
         idx += 1
         time.sleep(interval)
