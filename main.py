@@ -235,7 +235,7 @@ def one_symbol_flow(symbol: str, balance: float):
     if (
         long_score >= 5
         and trend_score >= 3
-        and prob > 0.75
+        and prob > 0.60
         and funding < 0.05
         and volatility > MIN_VOL
         and regime == "trending_up"
@@ -296,8 +296,8 @@ def one_symbol_flow(symbol: str, balance: float):
             reasons.append("long<5")
         if trend_score < 3:
             reasons.append("trend<3")
-        if prob <= 0.75:
-            reasons.append("prob≤0.75")
+        if prob <= 0.60:
+            reasons.append("prob≤0.60")
         if funding >= 0.05:
             reasons.append("funding≥0.05")
         if volatility <= MIN_VOL:
