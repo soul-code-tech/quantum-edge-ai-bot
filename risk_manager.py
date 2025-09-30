@@ -1,11 +1,11 @@
 # risk_manager.py
 import pandas as pd
 
+# risk_manager.py
 def calculate_position_size(df, risk_pct=1.0, account_balance=1000):
-    """Рассчитывает размер позиции на основе ATR и риска."""
     current_price = df['close'].iloc[-1]
     atr = df['atr'].iloc[-1] if 'atr' in df else current_price * 0.01
-    stop_distance = atr * 1.5  # 1.5 ATR
+    stop_distance = atr * 1.5
     risk_amount = account_balance * (risk_pct / 100)
     position_size = risk_amount / stop_distance
     return max(position_size, 0.001)
