@@ -1,29 +1,18 @@
 # risk_manager.py
-import pandas as pd
-
-# risk_manager.py
 def calculate_position_size(df, risk_pct=1.0, account_balance=1000):
     current_price = df['close'].iloc[-1]
-    atr = df['atr'].iloc[-1] if 'atr' in df else current_price * 0.01
+    atr = df['atr'].iloc[-1]
     stop_distance = atr * 1.5
     risk_amount = account_balance * (risk_pct / 100)
     position_size = risk_amount / stop_distance
     return max(position_size, 0.001)
 
 def calculate_stop_loss(df, side='long'):
-    """Рассчитывает стоп-лосс на основе ATR."""
     current_price = df['close'].iloc[-1]
-    atr = df['atr'].iloc[-1] if 'atr' in df else current_price * 0.01
-    if side == 'long':
-        return current_price - (atr * 1.5)
-    else:
-        return current_price + (atr * 1.5)
+    atr = df['atr'].iloc[-1]
+    return current_price - (atr * 1.5) if side == 'long' else current_price + (atr * 1.5)
 
 def calculate_take_profit(df, side='long'):
-    """Тейк-профит 2:1 относительно стопа."""
     sl = calculate_stop_loss(df, side)
     current_price = df['close'].iloc[-1]
-    if side == 'long':
-        return current_price + (current_price - sl)
-    else:
-        return current_price - (sl - current_price)
+    return current_price + (current_price - sl) if side == 'long' else current_price - (sl - current_price)
