@@ -357,23 +357,25 @@ if __name__ == "__main__":
         "📊  MAX_POS=%s  RISK=%s%%  MIN_VOL=%s%%  MIN_VOLUME=%s$",
         MAX_POS, RISK_PCT, MIN_VOL * 100, int(MIN_VOLUME_USD),
     )
+   
     # ---------- Подтягиваем веса ----------
-    # ---------- Подтягиваем веса ----------
-    target_file = "weights/BTCUSDT.pkl"  # новое имя после trainer.py
+target_file = "weights/BTCUSDT.pkl"
 if not os.path.exists(target_file):
     logger.info("🔄 Клонирую веса из ветки weights...")
     try:
-         subprocess.run([
-             "git", "clone", "--branch", "weights", "--depth", "1",
+        subprocess.run([
+            "git", "clone", "--branch", "weights", "--depth", "1",
             "https://github.com/soul-code-tech/quantum-edge-ai-bot.git",
             "weights_tmp"
         ], check=True)
         if os.path.exists("weights_tmp/weights"):
-             os.rename("weights_tmp/weights", "weights")
+            os.rename("weights_tmp/weights", "weights")
         subprocess.run(["rm", "-rf", "weights_tmp"], check=False)
-     except subprocess.CalledProcessError as e:
+    except subprocess.CalledProcessError as e:
         logger.error(f"❌ Не удалось клонировать веса: {e}")
     # -------------------------------------
+
+    init_models()
 
     init_models()  # ← вызываем ОДИН раз
     threading.Thread(target=trade_loop, daemon=True).start()
