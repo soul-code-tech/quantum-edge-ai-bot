@@ -25,12 +25,12 @@ class BingXTrader:
         self.trailing_distance_percent = 1.0
 
     def _set_leverage(self, leverage, side="LONG"):
-    try:
-        self.exchange.load_markets()
-        self.exchange.set_leverage(leverage, symbol=self.symbol, params={'side': side})
-        print(f"✅ {self.symbol}: плечо установлено на {leverage}x {side}")
+        try:
+          self.exchange.load_markets()
+           self.exchange.set_leverage(leverage, symbol=self.symbol, params={'side': side})
+              print(f"✅ {self.symbol}: плечо установлено на {leverage}x {side}")
     except Exception as e:
-        print(f"⚠️ Плечо {self.symbol}: {e}")
+              print(f"⚠️ Плечо {self.symbol}: {e}")
 
     def place_order(self, side, amount, stop_loss_percent=1.5, take_profit_percent=3.0):
         try:
