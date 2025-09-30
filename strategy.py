@@ -32,7 +32,6 @@ def calculate_strategy_signals(df, minutes=60):
         (df['rsi'] < 70).astype(int)
     ).clip(0, 5)
     
-    # Волатильность (обязательно!)
     df['volatility'] = df['close'].pct_change().rolling(20).std()
     
     return df
