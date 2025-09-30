@@ -9,6 +9,7 @@ import pickle
 import time
 
 class LSTMPredictor:
+    FINAL_FEATURES = ['volume', 'rsi_norm', 'sma_ratio', 'atr_norm', 'price_change', 'volume_change']   # 6 признаков
     def __init__(self, lookback=60, model_dir='weights'):
         self.lookback      = lookback
         self.model_dir     = model_dir
@@ -30,7 +31,8 @@ class LSTMPredictor:
     # ---------- архитектура ----------
     def _create_model(self, input_shape):
         model = Sequential([
-            LSTM(50, return_sequences=True, input_shape=input_shape),
+            LSTM(50, return_sequences=True,
+                 input_shape=(self.lookback, len(self.FINAL_FEATURES))),
             Dropout(0.2),
             LSTM(50, return_sequences=True),
             Dropout(0.2),
@@ -47,12 +49,12 @@ class LSTMPredictor:
     # ---------- подготовка ----------
     def _prepare_features(self, df: pd.DataFrame) -> pd.DataFrame:
         feat = df[self.feature_columns].copy()
-        feat['price_change'] = feat['close'].pct_change()
+        feat['price_change']  = feat['close'].pct_change()
         feat['volume_change'] = feat['volume'].pct_change()
         feat['rsi_norm']      = feat['rsi'] / 100.0
         feat['sma_ratio']     = feat['sma20'] / feat['sma50']
         feat['atr_norm']      = feat['atr'] / feat['close']
-        return feat.dropna()
+        return feat[self.FINAL_FEATURES].dropna()
 
     def _create_sequences(self, data, labels=None):
         seq, targ = [], []
@@ -91,7 +93,7 @@ class LSTMPredictor:
 
             future_ret = feat['close'].pct_change(5).shift(-5)
             labels = (future_ret > 0).astype(int).values
-            X_vals = feat.drop(['close'], axis=1).values
+            X_vals = feat[self.FINAL_FEATURES].values
             X_scaled = self.scaler.fit_transform(X_vals)
             X, y = self._create_sequences(X_scaled, labels)
             if len(X) == 0:
@@ -118,7 +120,7 @@ class LSTMPredictor:
             if len(feat) < self.lookback:
                 return 0.5
             recent = feat.tail(self.lookback)
-            X_vals = recent.drop(['close'], axis=1).values
+            X_vals = feat[self.FINAL_FEATURES].values
             X_scaled = self.scaler.transform(X_vals)
             seq = X_scaled.reshape(1, self.lookback, -1)
             pred = float(self.model.predict(seq, verbose=0)[0][0])
