@@ -54,11 +54,23 @@ def initialize_models():
     for s in SYMBOLS:
         lstm_models[s] = LSTMPredictor(lookback=60, model_dir='weights')
 
+def market_exists(symbol: str) -> bool:
+    try:
+        import ccxt
+        exch = ccxt.bingx({'options': {'defaultType': 'swap'}, 'enableRateLimit': True})
+        _ = exch.market(symbol)
+        return True
+    except Exception:
+        return False
+
 def perform_initial_training():
     """Первичное обучение 5 эпох, если весов нет."""
     for sym in SYMBOLS:
-        if lstm_models[sym].load(sym):          # веса уже есть
-            print(f'✅ {sym}: загружена сохранённая модель')
+        if not market_exists(sym):
+            print(f'⚠️ {sym}: нет на BingX – пропускаем')
+            continue
+        print(f'\n🎓 {sym}: первичное обучение (5 эпох)...')
+ 
             continue
         print(f'🎓 {sym}: первичное обучение ({INITIAL_EPOCHS} эпох)...')
         df = get_bars(sym, TIMEFRAME, 500)
