@@ -8,6 +8,7 @@ Quantum Edge AI Bot (DEMO)
 - полные информативные логи
 """
 
+import subprocess
 import os
 import time
 import threading
@@ -356,7 +357,19 @@ if __name__ == "__main__":
         "📊  MAX_POS=%s  RISK=%s%%  MIN_VOL=%s%%  MIN_VOLUME=%s$",
         MAX_POS, RISK_PCT, MIN_VOL * 100, int(MIN_VOLUME_USD),
     )
+    # ---------- Подтягиваем веса ----------
+if not os.path.exists("weights/BTCUSDTUSDT.pkl"):
+    logger.info("🔄 Клонирую веса из ветки weights...")
+    subprocess.run([
+        "git", "clone", "--branch", "weights", "--depth", "1",
+         "https://github.com/soul-code-tech/quantum-edge-ai-bot.git", "weights_tmp"
+     ], check=True)
+    os.rename("weights_tmp/weights", "weights")
+    subprocess.run(["rm", "-rf", "weights_tmp"], check=False)
+    # -------------------------------------
 
+    init_models()
+    
     init_models()
     threading.Thread(target=trade_loop, daemon=True).start()
     app.run(host="0.0.0.0", port=PORT, debug=False)
