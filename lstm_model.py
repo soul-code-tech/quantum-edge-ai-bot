@@ -1,4 +1,5 @@
 # lstm_model.py
+import os
 import numpy as np
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import Sequential
@@ -14,10 +15,8 @@ class LSTMPredictor:
         self.symbol = None
 
     def build_model(self, input_shape):
-        """Создаёт архитектуру модели. Вызывается один раз."""
         if self.model is not None:
-            return  # Уже построена
-
+            return
         model = Sequential([
             LSTM(50, return_sequences=True, input_shape=input_shape),
             Dropout(0.2),
@@ -30,54 +29,41 @@ class LSTMPredictor:
         self.model = model
 
     def prepare_features(self, df):
-        """Готовит признаки: open, high, low, close, volume → нормализованные."""
         if df is None or len(df) == 0:
             return np.array([])
-
-        # Ожидаем колонки: 'open', 'high', 'low', 'close', 'volume'
         features = df[['open', 'high', 'low', 'close', 'volume']].values.astype(float)
         scaled = self.scaler.fit_transform(features)
         return scaled
 
     def create_sequences(self, data):
-        """Создаёт последовательности для LSTM: X (lookback шагов) → y (следующий close)."""
         X, y = [], []
         for i in range(self.lookback, len(data)):
             X.append(data[i - self.lookback:i])
-            y.append(data[i, 3])  # close price
+            y.append(data[i, 3])  # close
         return np.array(X), np.array(y)
 
     def train(self, df, epochs=5, bars_back=400):
-        """Обучает модель. Модель ДОЛЖНА быть построена заранее!"""
         if self.model is None:
-            raise RuntimeError("Модель не построена. Вызовите build_model() перед обучением.")
-
+            raise RuntimeError("Модель не построена. Вызовите build_model().")
         data = self.prepare_features(df.tail(bars_back))
         if len(data) < self.lookback + 10:
-            raise ValueError("Недостаточно данных для создания последовательностей.")
-
+            raise ValueError("Недостаточно данных.")
         X, y = self.create_sequences(data)
         if len(X) == 0:
-            raise ValueError("Не удалось создать обучающие последовательности.")
-
-        X = X.reshape((X.shape[0], X.shape[1], 5))  # (samples, timesteps, features)
+            raise ValueError("Не удалось создать последовательности.")
+        X = X.reshape((X.shape[0], X.shape[1], 5))
         self.model.fit(X, y, epochs=epochs, batch_size=32, verbose=1)
         self.is_trained = True
 
     def predict(self, df):
-        """Делает предсказание на основе последних lookback баров."""
         if not self.is_trained or self.model is None:
             raise RuntimeError("Модель не обучена.")
-
-        data = self.prepare_features(df.tail(self.lookback + 10))  # немного запаса
+        data = self.prepare_features(df.tail(self.lookback + 10))
         if len(data) < self.lookback:
             raise ValueError("Недостаточно данных для предсказания.")
-
-        last_sequence = data[-self.lookback:]
-        last_sequence = last_sequence.reshape((1, self.lookback, 5))
-        pred_scaled = self.model.predict(last_sequence, verbose=0)
-
-        # Обратное преобразование: только для close (4-й признак)
+        last_seq = data[-self.lookback:]
+        last_seq = last_seq.reshape((1, self.lookback, 5))
+        pred_scaled = self.model.predict(last_seq, verbose=0)
         dummy = np.zeros((1, 5))
         dummy[0, 3] = pred_scaled[0, 0]
         pred = self.scaler.inverse_transform(dummy)[0, 3]
