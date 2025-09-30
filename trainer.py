@@ -14,17 +14,23 @@ def train_one(symbol: str, lookback: int = 60, epochs: int = 5, existing_model=N
     df = get_bars(symbol, "1h", 500)
     if df is None or len(df) < 400:
         return False
-    df = calculate_strategy_signals(df)
-    model = LSTMEnsemble()
-    model.build_models()
-    model.train(df, epochs=epochs)
-    model.save(model_path(symbol))
-    return True
+    df = calculate_strategy_signals(df, 60)  # ← добавлен аргумент minutes
+
+    # Используем существующую модель или создаём новую
     if existing_model is not None:
         model = existing_model
     else:
-        model = LSTMPredictor(lookback=lookback)
-        model.build_model((lookback, 5))
+        model = LSTMEnsemble()
+        model.build_models()
+
+    try:
+        model.train(df, epochs=epochs)
+        os.makedirs(MODEL_DIR, exist_ok=True)
+        model.save(model_path(symbol))
+        return True
+    except Exception as e:
+        print(f"Ошибка обучения {symbol}: {e}")
+        return False
 
 def load_model(symbol):
     return LSTMEnsemble.load(model_path(symbol))
