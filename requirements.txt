@@ -9,5 +9,3 @@ requests==2.32.3
 tensorflow==2.16.1
 scikit-learn==1.5.2
 python-telegram-bot==20.7
-matplotlib==3.8.2
-aiofiles==23.2.1
