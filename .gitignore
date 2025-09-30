@@ -1,0 +1,42 @@
+# Виртуальное окружение
+.venv/
+env/
+venv/
+
+# Кэш Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Логи и данные
+logs/
+*.log
+data/
+temp/
+
+# Секреты и конфиги
+.env
+config.json
+secrets/
+
+# TensorFlow / Keras
+*.h5
+*.pb
+saved_model/
+
+# Веса — НО! Исключение для ветки weights (см. ниже)
+# В основной ветке (main) веса игнорируются
+weights/
+
+# Render / системные файлы
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
