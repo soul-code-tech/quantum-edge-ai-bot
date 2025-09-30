@@ -2,106 +2,118 @@
 import os
 import threading
 import logging
-from flask import Flask
 import ccxt
+from flask import Flask
 from data_fetcher import get_bars
-from strategy import calculate_strategy_signals
+from strategy import calculate_strategy_signals, get_market_regime
 from lstm_model import LSTMPredictor
-from trainer import load_model, train_one
+from trainer import load_model
 
-# Настройка логирования
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(message)s")
 logger = logging.getLogger("main")
 
-# Символы
-SYMBOLS = [
-    "BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT", "BNB/USDT:USDT",
-    "XRP/USDT:USDT", "DOGE/USDT:USDT", "AVAX/USDT:USDT", "SHIB/USDT:USDT",
-    "LINK/USDT:USDT", "PENGU/USDT:USDT"
-]
-
-# Глобальные модели
+SYMBOLS = ["BTC/USDT:USDT", "ETH/USDT:USDT", ...]  # ваши пары
 lstm_models = {}
+active_positions = set()
 
 app = Flask(__name__)
-
-@app.route("/")
-def home():
-    return "✅ Quantum Edge AI Bot is running!"
 
 @app.route("/health")
 def health():
     return {"status": "ok"}
 
-def market_exists(symbol: str) -> bool:
+def place_order(symbol, side, amount, price):
+    """Разместить post-only limit-ордер."""
     try:
-        exchange = ccxt.bingx({'options': {'defaultType': 'swap'}, 'enableRateLimit': True})
-        markets = exchange.load_markets()
-        if symbol in markets:
-            market = markets[symbol]
-            return market.get('type') == 'swap' and market.get('active', False)
-        return False
+        exchange = ccxt.bingx({
+            'apiKey': os.getenv('BINGX_API_KEY'),
+            'secret': os.getenv('BINGX_SECRET_KEY'),
+            'options': {'defaultType': 'swap'}
+        })
+        order = exchange.create_order(
+            symbol=symbol,
+            type='limit',
+            side=side,
+            amount=amount,
+            price=price,
+            params={'postOnly': True}  # ← получаем ребейт!
+        )
+        logger.info(f"✅ Ордер {side} {symbol} на {amount} по {price}")
+        active_positions.add(symbol)
+        return order
     except Exception as e:
-        logger.warning(f"market_exists({symbol}) error: {e}")
-        return False
+        logger.error(f"❌ Ошибка ордера {symbol}: {e}")
 
-def initialize_models():
-    """Инициализирует модели: загружает или создаёт новые."""
-    global lstm_models
-    for s in SYMBOLS:
-        if not market_exists(s):
-            logger.warning(f"Рынок {s} недоступен — пропускаем")
-            continue
-        model = load_model(s, lookback=60)
-        if model is not None:
-            lstm_models[s] = model
-            logger.info(f"✅ Модель для {s} загружена")
-        else:
-            logger.info(f"🆕 Модель для {s} не найдена — создаём заготовку")
-            lstm_models[s] = LSTMPredictor(lookback=60)  # ← БЕЗ model_dir!
+def calculate_position_size(df, risk_pct=1.0, account_balance=1000):
+    current_price = df['close'].iloc[-1]
+    atr = df['atr'].iloc[-1]
+    stop_distance = atr * 1.5  # 1.5 ATR
+    risk_amount = account_balance * (risk_pct / 100)
+    position_size = risk_amount / stop_distance
+    return max(position_size, 0.001)
 
-def run_strategy():
-    """Основной цикл дообучения (в фоне)."""
-    initialize_models()
+def trade_with_filter(symbol):
+    try:
+        df = get_bars(symbol, "1h", 200)
+        if df is None or len(df) < 100:
+            return
+
+        df = calculate_strategy_signals(df, 60)
+        regime = get_market_regime(df)
+
+        # Фильтр режима
+        if regime not in ['trending_up', 'trending_down']:
+            return
+
+        model = lstm_models.get(symbol)
+        if not model or not model.is_trained:
+            return
+
+        prob = model.predict_proba(df)
+        current_price = df['close'].iloc[-1]
+
+        # LONG
+        if (df['long_score'].iloc[-1] >= 5 and 
+            df['trend_score'].iloc[-1] >= 3 and 
+            regime == 'trending_up' and 
+            prob > 0.75):
+
+            size = calculate_position_size(df)
+            # Размещаем limit-ордер чуть ниже рынка
+            limit_price = current_price * 0.9995
+            place_order(symbol, 'buy', size, limit_price)
+
+        # SHORT
+        elif (df['long_score'].iloc[-1] <= 2 and 
+              df['trend_score'].iloc[-1] <= 1 and 
+              regime == 'trending_down' and 
+              prob < 0.25):
+
+            size = calculate_position_size(df)
+            limit_price = current_price * 1.0005
+            place_order(symbol, 'sell', size, limit_price)
+
+    except Exception as e:
+        logger.error(f"Ошибка торговли {symbol}: {e}")
+
+def run_trading():
     while True:
         for symbol in SYMBOLS:
-            try:
-                logger.info(f"🔄 Дообучение модели для {symbol}")
-                model = lstm_models.get(symbol)
-                if model and hasattr(model, 'is_trained') and model.is_trained:
-                    success = train_one(symbol, epochs=2, existing_model=model)
-                else:
-                    success = train_one(symbol, epochs=2)
-                if success:
-                    # Обновляем модель в памяти
-                    updated = load_model(symbol, lookback=60)
-                    if updated:
-                        lstm_models[symbol] = updated
-                        logger.info(f"🧠 Модель {symbol} обновлена в памяти")
-            except Exception as e:
-                logger.error(f"❌ Ошибка дообучения {symbol}: {e}")
-        logger.info("⏳ Ждём 30 минут до следующего цикла дообучения...")
-        import time
-        time.sleep(1800)  # 30 минут
+            if symbol not in active_positions:  # Не входим в уже открытую позицию
+                trade_with_filter(symbol)
+        time.sleep(60)
+
+def initialize_models():
+    for s in SYMBOLS:
+        model = load_model(s, lookback=60)
+        if model:
+            lstm_models[s] = model
+        else:
+            lstm_models[s] = LSTMPredictor(lookback=60)
 
 if __name__ == "__main__":
-    logger.info("✅ [СТАРТ] Quantum Edge AI Bot запущен на 10 криптопарах")
-    logger.info(f"📊 ПАРЫ: {', '.join([s.replace('/USDT:USDT', '') for s in SYMBOLS])}")
-    logger.info("🧠 LSTM: порог уверенности 75.0%")
-    logger.info("💸 Риск: 1.0% от депозита на сделку")
-    logger.info("⛔ Стоп-лосс: 1.5% | 🎯 Тейк-профит: 3.0%")
-    logger.info("📈 Трейлинг-стоп: 1.0% от цены")
-    logger.info("⏳ Кулдаун: 3600 сек. на пару")
-    logger.info("🔄 Дообучение: каждые 30 минут на 2 эпохах")
-
-    # Запуск дообучения в фоне
-    strategy_thread = threading.Thread(target=run_strategy, daemon=True)
-    strategy_thread.start()
-
-    # Запуск Flask-сервера на порту 10000 (Render)
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    initialize_models()
+    threading.Thread(target=run_trading, daemon=True).start()
+    
+    port = int(os.getenv("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
