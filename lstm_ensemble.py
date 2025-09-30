@@ -89,13 +89,13 @@ class LSTMEnsemble:
                 "meta": self.meta_model
             }, f)
 
-      @classmethod
+    @classmethod
     def load(cls, path):
         # Проверяем наличие файлов с новым расширением
         m1_path = path.replace(".pkl", ".m1.weights.h5")
         m2_path = path.replace(".pkl", ".m2.weights.h5")
         if not (os.path.exists(path) and os.path.exists(m1_path) and os.path.exists(m2_path)):
-            return None
+        return None
         
         obj = cls()
         obj.build_models()
