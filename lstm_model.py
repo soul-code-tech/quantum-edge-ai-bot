@@ -19,8 +19,9 @@ class LSTMPredictor:
         self.model         = None
         self.scaler        = MinMaxScaler()
         self.feature_columns = ['close', 'volume', 'rsi', 'sma20', 'sma50', 'atr']
-        self.model_path    = None
-        self.scaler_path   = None
+        # пути будут заданы позже, но не None
+        self.model_path    = ''
+        self.scaler_path   = ''
         self.last_training_time = 0
 
     # ---------- пути ----------
@@ -80,9 +81,9 @@ class LSTMPredictor:
             pickle.dump(self.scaler, f)
         print(f'💾 {symbol}: веса сохранены ➜ {self.model_path}')
 
-    def load(self, symbol: str) -> bool:
-        if not (os.path.exists(self.model_path) and os.path.exists(self.scaler_path)):
-            return False
+    def load_or_create_model(self, symbol: str) -> bool:
+        self.model_path, self.scaler_path = self._get_model_paths(symbol)
+        return self.load(symbol)
         self.model = self._create_model((self.lookback, len(self.FINAL_FEATURES)))
         self.model.load_weights(self.model_path)
         with open(self.scaler_path, 'rb') as f:
