@@ -4,7 +4,7 @@ from ta.volatility import AverageTrueRange
 from ta.trend import SMAIndicator
 import numpy as np
 
-def calculate_strategy_signals(df, current_res_minutes=60):
+def calculate_strategy_signals(df, symbol=None, current_res_minutes=60):
     """
     Рассчитывает торговые сигналы на основе технических индикаторов
     """
