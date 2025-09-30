@@ -2,13 +2,13 @@ name: Retrain Models Every 2 Hours
 
 on:
   schedule:
-    - cron: "0 */2 * * *"  # Каждые 2 часа
+    - cron: "0 */2 * * *"
   workflow_dispatch:
 
 jobs:
   train:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - uses: actions/checkout@v4
@@ -21,21 +21,22 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - run: |
-          git fetch origin weights:weights
-          git checkout weights
-          find . -type f ! -name ".gitkeep" -delete
-          find . -type d ! -name "." ! -name "weights" -exec rm -rf {} + 2>/dev/null || true
-
+      # ШАГ 1: Обучаем модели в ветке main (где есть код)
       - env:
           BINGX_API_KEY: ${{ secrets.BINGX_API_KEY }}
           BINGX_SECRET_KEY: ${{ secrets.BINGX_SECRET_KEY }}
         run: python scripts/train_all.py
 
+      # ШАГ 2: Клонируем ветку weights и копируем туда ТОЛЬКО веса
       - run: |
+          git clone --branch weights --single-branch \
+            https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/soul-code-tech/quantum-edge-ai-bot.git \
+            weights-branch
+          cp -r weights/* weights-branch/ || true
+          cd weights-branch
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add weights/
+          git add .
           if ! git diff --cached --quiet; then
             git commit -m "🤖 Retrain (2h walk-forward)"
             git push origin weights
