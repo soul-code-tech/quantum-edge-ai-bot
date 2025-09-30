@@ -12,7 +12,9 @@ def calculate_stop_loss(df, side='long'):
     atr = df['atr'].iloc[-1]
     return current_price - (atr * 1.5) if side == 'long' else current_price + (atr * 1.5)
 
-def calculate_take_profit(df, side='long'):
+def calculate_take_profit(df, side='long', risk_reward_ratio=2.5):
     sl = calculate_stop_loss(df, side)
     current_price = df['close'].iloc[-1]
-    return current_price + (current_price - sl) if side == 'long' else current_price - (sl - current_price)
+    risk = abs(current_price - sl)
+    reward = risk * risk_reward_ratio
+    return current_price + reward if side == 'long' else current_price - reward
