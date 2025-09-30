@@ -89,14 +89,18 @@ class LSTMEnsemble:
                 "meta": self.meta_model
             }, f)
 
-    @classmethod
+      @classmethod
     def load(cls, path):
-        if not (os.path.exists(path) and os.path.exists(path.replace(".pkl", ".m1.h5"))):
+        # Проверяем наличие файлов с новым расширением
+        m1_path = path.replace(".pkl", ".m1.weights.h5")
+        m2_path = path.replace(".pkl", ".m2.weights.h5")
+        if not (os.path.exists(path) and os.path.exists(m1_path) and os.path.exists(m2_path)):
             return None
+        
         obj = cls()
         obj.build_models()
-        obj.model1.model.load_weights(path.replace(".pkl", ".m1.h5"))
-        obj.model2.model.load_weights(path.replace(".pkl", ".m2.h5"))
+        obj.model1.model.load_weights(m1_path)
+        obj.model2.model.load_weights(m2_path)
         with open(path, "rb") as f:
             bundle = pickle.load(f)
         obj.model1.scaler = bundle["scaler1"]
