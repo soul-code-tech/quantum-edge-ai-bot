@@ -33,7 +33,6 @@ lstm_models       = {}
 traders           = {}
 last_signal_time  = {}
 last_trailing_update = {}
-last_test_order   = 0
 last_retrain_time = 0
 total_trades      = 0
 
@@ -47,15 +46,20 @@ print(f"⏳ Кулдаун: {SIGNAL_COOLDOWN} сек. на пару")
 print(f"🔄 Дообучение: каждые {RETRAIN_INTERVAL // 60} минут на {RETRAIN_EPOCHS} эпохах")
 
 # --------------------- helpers ---------------------
+_bingx_markets = None   # кэш загруженных рынков
+
 def market_exists(symbol: str) -> bool:
-    """Проверяет наличие символа на BingX (swap)."""
-    try:
-        exch = ccxt.bingx({'options': {'defaultType': 'swap'}, 'enableRateLimit': True})
-        exch.load_markets()
-        return symbol in exch.markets
-    except Exception as e:
-        print(f'⚠️ market_exists({symbol}): {e}')
-        return False
+    """Проверяет наличие символа на BingX (swap). Кэширует markets при первом вызове."""
+    global _bingx_markets
+    if _bingx_markets is None:
+        try:
+            exch = ccxt.bingx({'options': {'defaultType': 'swap'}, 'enableRateLimit': True})
+            exch.load_markets()
+            _bingx_markets = exch.markets
+        except Exception as e:
+            print(f'⚠️ market_exists: не удалось загрузить рынки – {e}')
+            return False
+    return symbol in _bingx_markets
 
 def initialize_models():
     global lstm_models
@@ -103,7 +107,7 @@ def perform_retraining():
 
 # --------------------- основной цикл ---------------------
 def run_strategy():
-    global last_signal_time, last_trailing_update, last_test_order, total_trades, last_retrain_time
+    global last_signal_time, last_trailing_update, last_retrain_time, total_trades
 
     initialize_models()
     perform_initial_training()
@@ -165,13 +169,7 @@ def run_strategy():
                         traders[s].update_trailing_stop()
                 last_trailing_update['global'] = time.time()
 
-            # тест-ордер отключён до первого успешного обучения
-            # if time.time() - last_test_order > TEST_INTERVAL:
-            #     test_sym = SYMBOLS[0]
-            #     print(f"\n🎯 [ТЕСТ] BUY на {test_sym}")
-            #     traders[test_sym].place_order(...)
-            #     last_test_order = time.time()
-
+            # тест-ордер полностью удалён – ничего не мешает обучению
             time.sleep(60)
         except Exception as e:
             print(f"❌ КРИТ: {e}")
