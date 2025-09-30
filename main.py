@@ -359,28 +359,28 @@ if __name__ == "__main__":
         MAX_POS, RISK_PCT, MIN_VOL * 100, int(MIN_VOLUME_USD),
     )
    
- # ---------- Подтягиваем веса ----------
- target_file = "weights/BTCUSDT.pkl"
- if not os.path.exists(target_file):
-     logger.info("🔄 Клонирую веса из ветки weights...")
-     try:
-         subprocess.run([
-             "git", "clone", "--branch", "weights", "--depth", "1",
-             "https://github.com/soul-code-tech/quantum-edge-ai-bot.git",
-             "weights_tmp"
-         ], check=True)
-         # копируем ВСЕ файлы из weights_tmp/ в weights/
-         os.makedirs("weights", exist_ok=True)
-         for fname in os.listdir("weights_tmp"):
-             if fname.endswith((".pkl", ".weights.h5")):
-                 src = os.path.join("weights_tmp", fname)
-                 dst = os.path.join("weights", fname)
-                 shutil.move(src, dst)
-         subprocess.run(["rm", "-rf", "weights_tmp"], check=False)
-     except subprocess.CalledProcessError as e:
-         logger.error(f"❌ Не удалось клонировать веса: {e}")
+    # ---------- Подтягиваем веса ----------
+    target_file = "weights/BTCUSDT.pkl"
+    if not os.path.exists(target_file):
+        logger.info("🔄 Клонирую веса из ветки weights...")
+        try:
+            subprocess.run([
+                "git", "clone", "--branch", "weights", "--depth", "1",
+                "https://github.com/soul-code-tech/quantum-edge-ai-bot.git",
+                "weights_tmp"
+            ], check=True)
+            # копируем ВСЕ файлы из weights_tmp/ в weights/
+            os.makedirs("weights", exist_ok=True)
+            for fname in os.listdir("weights_tmp"):
+                if fname.endswith((".pkl", ".weights.h5")):
+                    src = os.path.join("weights_tmp", fname)
+                    dst = os.path.join("weights", fname)
+                    shutil.move(src, dst)
+            subprocess.run(["rm", "-rf", "weights_tmp"], check=False)
+        except subprocess.CalledProcessError as e:
+            logger.error(f"❌ Не удалось клонировать веса: {e}")
     # -------------------------------------
-    
+
     init_models()
 
     init_models()  # ← вызываем ОДИН раз
