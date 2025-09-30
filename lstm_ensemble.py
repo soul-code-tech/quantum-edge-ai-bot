@@ -1,4 +1,4 @@
-# src/lstm_ensemble.py
+# lstm_ensemble.py
 import os
 import pickle
 import numpy as np
@@ -7,6 +7,7 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 from tensorflow.keras.optimizers import Adam
 from sklearn.preprocessing import MinMaxScaler
+
 
 class LSTMPredictor:
     def __init__(self, lookback=60):
@@ -25,7 +26,11 @@ class LSTMPredictor:
                 Dense(16, activation='relu'),
                 Dense(1, activation='sigmoid')
             ])
-            model.compile(optimizer=Adam(0.001), loss='binary_crossentropy', metrics=['accuracy'])
+            model.compile(
+                optimizer=Adam(learning_rate=0.001),
+                loss='binary_crossentropy',
+                metrics=['accuracy']
+            )
             self.model = model
 
     def prepare_features(self, df):
@@ -51,6 +56,7 @@ class LSTMPredictor:
         seq = data[-self.lookback:].reshape(1, self.lookback, 5)
         return float(self.model.predict(seq, verbose=0)[0, 0])
 
+
 class LSTMEnsemble:
     def __init__(self):
         self.model1 = LSTMPredictor(lookback=60)
@@ -63,25 +69,25 @@ class LSTMEnsemble:
         self.model2.build_model((90, 5))
 
     def train(self, df, epochs=5):
-        self.model1.train(df, epochs)
-        self.model2.train(df, epochs)
-        # Обучаем мета-модель на валидационных данных (упрощённо)
-        self.meta_model.fit(
-            [[0.6, 0.7], [0.4, 0.3]],  # dummy
-            [1, 0]
-        )
+        self.model1.train(df, epochs=epochs)
+        self.model2.train(df, epochs=epochs)
+        # Для простоты мета-модель не обучаем на валидации
+        # В продакшене — обучайте на OOS данных
+        self.meta_model.fit([[0.5, 0.5]], [1])  # dummy fit to avoid error
         self.is_trained = True
 
     def predict_proba(self, df):
         p1 = self.model1.predict_proba(df)
         p2 = self.model2.predict_proba(df)
-        ensemble_pred = self.meta_model.predict_proba([[p1, p2]])[0, 1]
+        # Простое усреднение (можно заменить на meta_model.predict_proba)
+        ensemble_pred = (p1 + p2) / 2.0
         return float(ensemble_pred)
 
     def save(self, path):
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        self.model1.model.save_weights(path.replace(".pkl", ".m1.h5"))
-        self.model2.model.save_weights(path.replace(".pkl", ".m2.h5"))
+        # Сохраняем веса с расширением .weights.h5 (требование TF 2.19+)
+        self.model1.model.save_weights(path.replace(".pkl", ".m1.weights.h5"))
+        self.model2.model.save_weights(path.replace(".pkl", ".m2.weights.h5"))
         with open(path, "wb") as f:
             pickle.dump({
                 "scaler1": self.model1.scaler,
@@ -91,12 +97,11 @@ class LSTMEnsemble:
 
     @classmethod
     def load(cls, path):
-        # Проверяем наличие файлов с новым расширением
         m1_path = path.replace(".pkl", ".m1.weights.h5")
         m2_path = path.replace(".pkl", ".m2.weights.h5")
         if not (os.path.exists(path) and os.path.exists(m1_path) and os.path.exists(m2_path)):
-        return None
-        
+            return None
+
         obj = cls()
         obj.build_models()
         obj.model1.model.load_weights(m1_path)
