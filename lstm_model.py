@@ -18,7 +18,7 @@ class LSTMPredictor:
         self.model         = None
         self.scaler        = MinMaxScaler()
         self.feature_columns = ['close', 'volume', 'rsi', 'sma20', 'sma50', 'atr']
-        self.model_path    = ''   # будет заполнено позже
+        self.model_path    = ''
         self.scaler_path   = ''
         self.last_training_time = 0
 
