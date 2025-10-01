@@ -380,8 +380,13 @@ if __name__ == "__main__":
         except subprocess.CalledProcessError as e:
             logger.error(f"❌ Не удалось клонировать веса: {e}")
     # -------------------------------------
-
-    init_models()
+   
+    # ---------- Optime robot ping ----------
+    @app.route("/optime", methods=["GET"])
+    def optime_ping():
+        return {"message": "OK"}, 200
+   
+init_models()
 
     init_models()  # ← вызываем ОДИН раз
     threading.Thread(target=trade_loop, daemon=True).start()
