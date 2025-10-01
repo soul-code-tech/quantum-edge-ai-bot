@@ -1,15 +1,16 @@
-name: Retrain Models Every 2 Hours
-
+name: Retrain micro-models every 2h
 on:
   schedule:
     - cron: "0 */2 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: write  # чтобы можно было пушить ветку weights
+
 jobs:
   train:
     runs-on: ubuntu-latest
     timeout-minutes: 25
-
     steps:
       - uses: actions/checkout@v4
         with:
@@ -21,18 +22,27 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      # ШАГ 1: Обучаем модели в ветке main (где есть код)
-      - env:
+      # 1. обучаем модели
+      - name: Train models
+        env:
           BINGX_API_KEY: ${{ secrets.BINGX_API_KEY }}
           BINGX_SECRET_KEY: ${{ secrets.BINGX_SECRET_KEY }}
-        run: python scripts/train_all.py
+        run: ${{ env.pythonLocation }}/bin/python scripts/train_all.py
 
-      # ШАГ 2: Клонируем ветку weights и копируем туда ТОЛЬКО веса
-      - run: |
+      # 2. клонируем ветку weights и копируем веса
+      - name: Push weights to branch weights
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          export GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}"
+          export GITHUB_REPOSITORY="${{ github.repository }}"
           git clone --branch weights --single-branch \
-            https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/soul-code-tech/quantum-edge-ai-bot.git \
+            https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git \
+            weights-branch || git clone --single-branch \
+            https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git \
             weights-branch
-          cp -r weights/* weights-branch/ || true
+          cp -r weights/* weights-branch/ 2>/dev/null || true
           cd weights-branch
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
