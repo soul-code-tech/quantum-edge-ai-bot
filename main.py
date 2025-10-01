@@ -389,5 +389,11 @@ if __name__ == "__main__":
     PORT = int(os.getenv("PORT", 10000))
     logger.info(f"🚀 Flask стартует на {HOST}:{PORT}")
 
+    # ---------- Optime robot ping ----------
+    @app.route("/optime", methods=["GET"])
+    def optime_ping():
+        return {"message": "OK"}, 200
+    # -------------------------------------
+
     threading.Thread(target=trade_loop, daemon=True).start()
     app.run(host=HOST, port=PORT, debug=False)
