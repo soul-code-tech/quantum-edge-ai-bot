@@ -334,8 +334,8 @@ def init_models():
             logger.warning(f"⚠️  Модель {s} не найдена / не обучена")
 
 
- # ---------- Optime robot ping ----------
- @app.route("/optime", methods=["GET"])
+    # ---------- Optime robot ping ----------
+     @app.route("/optime", methods=["GET"])
  def optime_ping():
      return {"message": "OK"}, 200
  # -------------------------------------
