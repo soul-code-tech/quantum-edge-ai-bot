@@ -335,7 +335,7 @@ def init_models():
 
 
     # ---------- Optime robot ping ----------
-     @app.route("/optime", methods=["GET"])
+ @app.route("/optime", methods=["GET"])
  def optime_ping():
      return {"message": "OK"}, 200
  # -------------------------------------
