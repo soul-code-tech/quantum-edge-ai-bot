@@ -384,8 +384,10 @@ if __name__ == "__main__":
 
     init_models()
 
+    # ---------- Flask стартует ----------
     HOST = "0.0.0.0"
     PORT = int(os.getenv("PORT", 10000))
     logger.info(f"🚀 Flask стартует на {HOST}:{PORT}")
+
     threading.Thread(target=trade_loop, daemon=True).start()
     app.run(host=HOST, port=PORT, debug=False)
