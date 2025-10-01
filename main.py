@@ -334,11 +334,9 @@ def init_models():
             logger.warning(f"⚠️  Модель {s} не найдена / не обучена")
 
 
-# ---------- Optime robot ping ----------
-@app.route("/optime", methods=["GET"])
-def optime_ping():
-    return {"message": "OK"}, 200
-# ---------------------------------------
+@app.route("/health")
+def health():
+    return {"status": "ok", "positions": len(active_pos), "balance": get_balance()}
 
 
 def shutdown(signum, frame):
@@ -360,7 +358,7 @@ if __name__ == "__main__":
         "📊  MAX_POS=%s  RISK=%s%%  MIN_VOL=%s%%  MIN_VOLUME=%s$",
         MAX_POS, RISK_PCT, MIN_VOL * 100, int(MIN_VOLUME_USD),
     )
-
+   
     # ---------- Подтягиваем веса ----------
     target_file = "weights/BTCUSDT.pkl"
     if not os.path.exists(target_file):
@@ -382,11 +380,22 @@ if __name__ == "__main__":
             logger.error(f"❌ Не удалось клонировать веса: {e}")
     # -------------------------------------
 
-    init_models()
+    init_models()  # ← ОДИН раз
+
+    # ---------- Uptime Robot / Health ----------
+    @app.route("/health")
+    def health():
+        return {"status": "ok", "positions": len(active_pos), "balance": get_balance()}, 200
+
+
+    @app.route("/optime", methods=["GET"])
+    def optime_ping():
+        return {"message": "OK"}, 200
+    # ------------------------------------------
 
     HOST = "0.0.0.0"
     PORT = int(os.getenv("PORT", 10000))
-    logger.info(f"🚀 Flask стартует на {HOST}:{PORT}")
+    logger.info(f"🚀 Flask binding to {HOST}:{PORT}")
 
     threading.Thread(target=trade_loop, daemon=True).start()
     app.run(host=HOST, port=PORT, debug=False)
