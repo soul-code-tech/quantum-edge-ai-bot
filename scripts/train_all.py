@@ -1,36 +1,31 @@
-# scripts/train_all.py
+#!/usr/bin/env python3
 import os
 import sys
+import asyncio
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from trainer import train_one, load_model
+from cli import train_one   # ваша asyncio-функция
 
-SYMBOLS = [
-    "BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT", "BNB/USDT:USDT",
-    "XRP/USDT:USDT", "DOGE/USDT:USDT", "AVAX/USDT:USDT", "SHIB/USDT:USDT",
-    "LINK/USDT:USDT", "PENGU/USDT:USDT"
-]
+SYMBOLS = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "XRP-USDT", "DOGE-USDT"]
 
-def main():
+async def main():
     print("🚀 Запуск дообучения моделей (каждые 2 часа)")
     os.makedirs("weights", exist_ok=True)
-    
+
     for symbol in SYMBOLS:
         print(f"\n🔄 Обработка {symbol}...")
-        model = load_model(symbol)
-        if model is not None:
-            print(f"  → Модель найдена — дообучаем на 2 эпохах")
-            success = train_one(symbol, epochs=2, existing_model=model)
-        else:
-            print(f"  → Модель не найдена — обучаем с нуля на 5 эпохах")
-            success = train_one(symbol, epochs=5)
-        
-        if success:
+        try:
+            await train_one(symbol, epochs=2)   # дообучение 2 эпохи
             print(f"  ✅ {symbol} успешно обновлён")
-        else:
-            print(f"  ❌ {symbol} пропущен (ошибка данных или рынка)")
+        except ValueError as e:
+            if "single class" in str(e) or "low volatility" in str(e):
+                print(f"  ⏭️  {symbol} пропущен – {e}")
+            else:
+                print(f"  ❌ {symbol} пропущен – {e}")
+        except Exception as e:
+            print(f"  ❌ {symbol} пропущен – {e}")
 
     print("\n🏁 Цикл дообучения завершён")
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
