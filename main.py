@@ -334,50 +334,58 @@ def init_models():
             logger.warning(f"⚠️  Модель {s} не найдена / не обучена")
 
 
-    # ---------- Optime robot ping ----------
- @app.route("/optime", methods=["GET"])
- def optime_ping():
-     return {"message": "OK"}, 200
- # -------------------------------------
+# ---------- Optime robot ping ----------
+@app.route("/optime", methods=["GET"])
+def optime_ping():
+    return {"message": "OK"}, 200
+# ---------------------------------------
 
 
- if __name__ == "__main__":
-     signal.signal(signal.SIGINT, shutdown)
-     signal.signal(signal.SIGTERM, shutdown)
+def shutdown(signum, frame):
+    logger.info("🛑 SIGTERM/SIGINT – отмена всех ордеров...")
+    try:
+        get_exchange().cancel_all_orders()
+    except:
+        pass
+    os._exit(0)
 
-     logger.info("✅ Quantum Edge AI Bot (DEMO)")
-     logger.info("🛡️  Post-only + market-fill + fresh SL/TP | RR=1:%s", int(RR_RATIO))
-     logger.info(
-         "📊  MAX_POS=%s  RISK=%s%%  MIN_VOL=%s%%  MIN_VOLUME=%s$",
-         MAX_POS, RISK_PCT, MIN_VOL * 100, int(MIN_VOLUME_USD),
-     )
 
-     # ---------- Подтягиваем веса ----------
-     target_file = "weights/BTCUSDT.pkl"
-     if not os.path.exists(target_file):
-         logger.info("🔄 Клонирую веса из ветки weights...")
-         try:
-             subprocess.run([
-                 "git", "clone", "--branch", "weights", "--depth", "1",
-                 "https://github.com/soul-code-tech/quantum-edge-ai-bot.git",
-                 "weights_tmp"
-             ], check=True)
-             os.makedirs("weights", exist_ok=True)
-             for fname in os.listdir("weights_tmp"):
-                 if fname.endswith((".pkl", ".weights.h5")):
-                     src = os.path.join("weights_tmp", fname)
-                     dst = os.path.join("weights", fname)
-                     shutil.move(src, dst)
-             subprocess.run(["rm", "-rf", "weights_tmp"], check=False)
-         except subprocess.CalledProcessError as e:
-             logger.error(f"❌ Не удалось клонировать веса: {e}")
-     # -------------------------------------
+if __name__ == "__main__":
+    signal.signal(signal.SIGINT, shutdown)
+    signal.signal(signal.SIGTERM, shutdown)
 
-     init_models()  # ← ОДИН раз
+    logger.info("✅ Quantum Edge AI Bot (DEMO)")
+    logger.info("🛡️  Post-only + market-fill + fresh SL/TP | RR=1:%s", int(RR_RATIO))
+    logger.info(
+        "📊  MAX_POS=%s  RISK=%s%%  MIN_VOL=%s%%  MIN_VOLUME=%s$",
+        MAX_POS, RISK_PCT, MIN_VOL * 100, int(MIN_VOLUME_USD),
+    )
 
-     # ---------- Flask стартует ----------
-     HOST = "0.0.0.0"
-     PORT = int(os.getenv("PORT", 10000))
-     logger.info(f"🚀 Flask стартует на {HOST}:{PORT}")
-     threading.Thread(target=trade_loop, daemon=True).start()
-     app.run(host=HOST, port=PORT, debug=False)
+    # ---------- Подтягиваем веса ----------
+    target_file = "weights/BTCUSDT.pkl"
+    if not os.path.exists(target_file):
+        logger.info("🔄 Клонирую веса из ветки weights...")
+        try:
+            subprocess.run([
+                "git", "clone", "--branch", "weights", "--depth", "1",
+                "https://github.com/soul-code-tech/quantum-edge-ai-bot.git",
+                "weights_tmp"
+            ], check=True)
+            os.makedirs("weights", exist_ok=True)
+            for fname in os.listdir("weights_tmp"):
+                if fname.endswith((".pkl", ".weights.h5")):
+                    src = os.path.join("weights_tmp", fname)
+                    dst = os.path.join("weights", fname)
+                    shutil.move(src, dst)
+            subprocess.run(["rm", "-rf", "weights_tmp"], check=False)
+        except subprocess.CalledProcessError as e:
+            logger.error(f"❌ Не удалось клонировать веса: {e}")
+    # -------------------------------------
+
+    init_models()
+
+    HOST = "0.0.0.0"
+    PORT = int(os.getenv("PORT", 10000))
+    logger.info(f"🚀 Flask стартует на {HOST}:{PORT}")
+    threading.Thread(target=trade_loop, daemon=True).start()
+    app.run(host=HOST, port=PORT, debug=False)
