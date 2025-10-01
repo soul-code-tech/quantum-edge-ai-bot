@@ -369,6 +369,7 @@ if __name__ == "__main__":
                 "https://github.com/soul-code-tech/quantum-edge-ai-bot.git",
                 "weights_tmp"
             ], check=True)
+            # копируем ВСЕ файлы из weights_tmp/ в weights/
             os.makedirs("weights", exist_ok=True)
             for fname in os.listdir("weights_tmp"):
                 if fname.endswith((".pkl", ".weights.h5")):
@@ -380,22 +381,8 @@ if __name__ == "__main__":
             logger.error(f"❌ Не удалось клонировать веса: {e}")
     # -------------------------------------
 
-    init_models()  # ← ОДИН раз
+    init_models()
 
-    # ---------- Uptime Robot / Health ----------
-    @app.route("/health")
-    def health():
-        return {"status": "ok", "positions": len(active_pos), "balance": get_balance()}, 200
-
-
-    @app.route("/optime", methods=["GET"])
-    def optime_ping():
-        return {"message": "OK"}, 200
-    # ------------------------------------------
-
-    HOST = "0.0.0.0"
-    PORT = int(os.getenv("PORT", 10000))
-    logger.info(f"🚀 Flask binding to {HOST}:{PORT}")
-
+    init_models()  # ← вызываем ОДИН раз
     threading.Thread(target=trade_loop, daemon=True).start()
-    app.run(host=HOST, port=PORT, debug=False)
+    app.run(host="0.0.0.0", port=PORT, debug=False)
