@@ -386,7 +386,7 @@ if __name__ == "__main__":
     def optime_ping():
         return {"message": "OK"}, 200
    
-init_models()
+    init_models()
 
     init_models()  # ← вызываем ОДИН раз
     threading.Thread(target=trade_loop, daemon=True).start()
